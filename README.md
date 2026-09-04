@@ -1,6 +1,18 @@
-# AutoInsight — Automated Data Analyst
+# AutoInsight — Automated Data Analyst 🚧 **Development Version**
 
 A locally-hostable web app that automatically cleans, explores, and models CSV datasets — no code required.
+
+<p align="center">
+  <b>⚠️ <strong>WARNING:</strong> This project is under active development.</b><br>
+  <br>
+  The data profiling, cleaning, and EDA features <strong>work correctly</strong>.<br>
+  However, the <strong>modeling/training part is not functioning properly</strong> and may produce unreliable results.<br>
+  <br>
+  <strong>Currently working features:</strong> Data upload, profiling, cleaning, EDA visualizations, report generation.<br>
+  <strong>Known limitations:</strong> Model training, predictions, and model comparison are disabled/restricted.<br>
+  <br>
+  Use this tool for data exploration and cleaning only. Modeling features will be restored in a future version.
+</p>
 
 ## Overview
 
