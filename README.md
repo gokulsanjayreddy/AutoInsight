@@ -1,4 +1,5 @@
-# AutoInsight — Automated Data Analyst 🚧 **Development Version**
+# AutoInsight — Automated Data Analyst
+ 🚧 **Development Version**
 
 A locally-hostable web app that automatically cleans, explores, and models CSV datasets — no code required.
 
