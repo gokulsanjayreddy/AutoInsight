@@ -1,13 +1,16 @@
 """EDA (Exploratory Data Analysis) module for AutoInsight.
 
 Provides plotting and statistics functions for dataset overview,
-distributions, correlations, and target relationships.
+distributions, correlations, and target relationships using
+matplotlib, seaborn, and plotly.
 """
 
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
 
@@ -125,9 +128,7 @@ def plot_categorical_bars(df: pd.DataFrame, max_categories: int = 15) -> list[pl
     list[plt.Figure]
         List of matplotlib figures.
     """
-    cat_df = df.select_dtypes(
-        include=["object", "category"]
-    ).copy()
+    cat_df = df.select_dtypes(include=["object", "category"]).copy()
     if cat_df.empty:
         return []
 
@@ -210,11 +211,15 @@ def plot_pairwise_scatter(
     if num_df.empty or len(num_df.columns) < 2:
         return []
 
-    # Sample data if too large
+    # Sample from numeric columns only
+    num_cols = num_df.columns.tolist()
+    if len(num_cols) < 2:
+        return []
+
     if len(df) > sample_size:
-        sample_df = df.sample(n=sample_size, random_state=42)
+        sample_df = df[num_cols].sample(n=sample_size, random_state=42)
     else:
-        sample_df = df
+        sample_df = num_df
 
     corr_matrix = sample_df.corr().abs()
     # Get upper triangle mask
@@ -282,9 +287,7 @@ def plot_target_relationships(
     """
     figures = []
     num_df = df.select_dtypes(include=[np.number]).copy()
-    cat_df = df.select_dtypes(
-        include=["object", "category"]
-    ).copy()
+    cat_df = df.select_dtypes(include=["object", "category"]).copy()
 
     if target_col not in df.columns:
         return figures
@@ -334,5 +337,119 @@ def plot_target_relationships(
                 figures.append(fig)
             except Exception:
                 pass
+
+    return figures
+
+
+# ---- Plotly Charts ----
+
+def plotly_distribution_histogram(df: pd.DataFrame, column: str, nbins: int = 30) -> go.Figure:
+    """Generate a plotly histogram for a numeric column."""
+    fig = px.histogram(df, x=column, nbins=nbins,
+                       title=f"Distribution: {column}")
+    fig.update_layout(template="plotly_white")
+    # Add KDE using a density curve
+    # Plotly doesn't have built-in KDE, so we just show the histogram
+    return fig
+
+
+def plotly_correlation_heatmap(df: pd.DataFrame, max_cols: int = 20) -> go.Figure:
+    """Generate a plotly correlation heatmap."""
+    num_df = df.select_dtypes(include=[np.number])
+    if num_df.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="No numeric columns found", x=0.5, y=0.5, showarrow=False)
+        return fig
+
+    corr = num_df.corr()
+
+    fig = go.Figure(data=go.Heatmap(
+        z=corr.values,
+        x=corr.columns.tolist(),
+        y=corr.columns.tolist(),
+        colorscale="RdBu",
+        zmid=0,
+        showscale=True,
+    ))
+    fig.update_layout(
+        title="Correlation Heatmap (Plotly)",
+        template="plotly_white",
+        width=800,
+        height=600,
+    )
+    return fig
+
+
+def plotly_pairwise_scatter(df: pd.DataFrame, max_pairs: int = 6, sample_size: int = 500) -> list[go.Figure]:
+    """Generate plotly pairwise scatter plots for top correlated numeric pairs."""
+    num_df = df.select_dtypes(include=[np.number])
+    if num_df.empty or len(num_df.columns) < 2:
+        return []
+
+    # Sample from numeric columns only
+    num_cols = num_df.columns.tolist()
+    if len(df) > sample_size:
+        sample_df = df[num_cols].sample(n=sample_size, random_state=42)
+    else:
+        sample_df = num_df
+
+    corr_matrix = sample_df.corr().abs()
+    upper = corr_matrix.where(np.tri(len(corr_matrix), k=1, dtype=bool))
+    stacked = upper.unstack()
+    sorted_pairs = stacked.dropna().sort_values(ascending=False)
+    top_pairs = sorted_pairs.head(max_pairs)
+
+    figures = []
+    if not top_pairs.empty:
+        for (col1, col2), corr_val in top_pairs.items():
+            fig = px.scatter(sample_df, x=col1, y=col2,
+                             title=f"{col1} vs {col2}\n(r = {corr_val:.2f})",
+                             labels={col1: col1, col2: col2})
+            fig.update_layout(template="plotly_white")
+            figures.append(fig)
+
+    return figures
+
+
+def plotly_target_relationships(df: pd.DataFrame, target_col: str) -> list[go.Figure]:
+    """Generate plotly target-vs-feature plots."""
+    figures = []
+    num_df = df.select_dtypes(include=[np.number]).copy()
+    cat_df = df.select_dtypes(include=["object", "category"]).copy()
+
+    if target_col not in df.columns:
+        return figures
+
+    # Numeric features vs target - box plot (plotly)
+    for col in num_df.columns:
+        if col == target_col:
+            continue
+        fig = px.box(df, x=target_col, y=col,
+                     title=f"{col} vs {target_col} (numeric)")
+        fig.update_layout(template="plotly_white")
+        figures.append(fig)
+
+    # Categorical features vs target - grouped bar (plotly)
+    for col in cat_df.columns:
+        if col == target_col:
+            continue
+        if df[col].nunique() > 20:
+            continue
+        fig = px.bar(df, x=target_col, y=col, color=col,
+                     title=f"{col} vs {target_col} (categorical)",
+                     barmode="group")
+        fig.update_layout(template="plotly_white", xaxis_tickangle=-45)
+        figures.append(fig)
+
+    # Numeric target vs numeric feature scatter (plotly)
+    if pd.api.types.is_numeric_dtype(df[target_col]):
+        for col in num_df.columns:
+            if col == target_col:
+                continue
+            fig = px.scatter(df, x=col, y=target_col,
+                             title=f"{col} vs {target_col} (scatter)",
+                             opacity=0.6)
+            fig.update_layout(template="plotly_white")
+            figures.append(fig)
 
     return figures
