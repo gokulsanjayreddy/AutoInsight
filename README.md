@@ -1,73 +1,88 @@
-# AutoInsight — Automated Data Analyst
+# AutoInsight — Automated Exploratory Data Analysis
 
-A locally-hostable web app that automatically explores and visualizes CSV datasets with attractive charts.
+A locally-hostable web application that automatically explores and visualizes CSV datasets. AutoInsight generates strictly separated, independent visualizations across all column combinations and allows users to download the entire chart suite in one click.
 
-<p align="center">
-  <b>📊 Focused on Data Analysis & EDA</b><br>
-  <br>
-  AutoInsight provides automatic exploratory data analysis with matplotlib, seaborn, and plotly charts.
-</p>
+## Features
 
-## Overview
-
-AutoInsight is a Streamlit-based application that provides an automated data analysis pipeline:
-
-1. **Data Upload** — Accepts CSV files
-2. **Dataset Profiling** — Automatic column type inference and statistics
-3. **Exploratory Data Analysis** — Generates summary statistics, distribution plots, correlation heatmaps, and target relationship visualizations
+- **Direct Results Interface**: Clean, single-page interface without sidebar panels or top toggle tabs.
+- **Strictly Separated Charts**: Every distribution, boxplot, scatter plot, and cross-tabulation is rendered as its own independent figure.
+- **Comprehensive Column Combinations**:
+  - **Summary Statistics and Missing Values**: Table with mean, dispersion, skewness, kurtosis, and missing values breakdown.
+  - **Numeric Distributions**: Individual histograms with KDE curves, mean, and median markers.
+  - **Outlier Boxplots**: Individual box and whisker plots highlighting quartiles and flagged outliers.
+  - **Categorical Distributions**: Frequency and percentage bar charts for categorical columns.
+  - **Correlation Matrix**: Full Pearson correlation heatmap across numeric features.
+  - **Numeric vs Numeric Relationships**: Bivariate scatter plots with linear regression trendlines for numeric pairs.
+  - **Categorical vs Numeric Relationships**: Grouped boxplots comparing numeric metrics across categories.
+  - **Categorical vs Categorical Interactions**: 100% normalized cross-tabulation stacked bar charts for category pairs.
+- **Batch and Individual Downloads**: Download all generated charts bundled into an organized ZIP archive in one click, or download individual plots as PNGs.
+- **Demo Dataset**: 1-click sample dataset loader for instant testing.
 
 ## Project Structure
 
 ```
 autoinsight/
-├ app.py                  # Streamlit entrypoint / UI orchestration
+├ app.py                 # Streamlit entrypoint and UI orchestration
 ├ modules/
 │   ├── __init__.py
-│   ├── data_loader.py       # CSV upload, type inference, basic validation
-│   └ eda.py                # all plotting/statistics functions (matplotlib + plotly)
+│   ├── data_loader.py   # CSV ingestion, column type inference, profiling, demo dataset
+│   └ eda.py             # Plotting and statistics functions (matplotlib + plotly)
+├ tests/
+│   ├── test_eda.py      # Unit tests for plot separation and figure generation
+│   └ test_pipeline.py   # End-to-end pipeline and ZIP archive tests
+├ .github/workflows/
+│   ├── ci.yml           # CI workflow (linting, type checking, unit tests)
+│   └ pr-comment.yml     # PR validation workflow
 ├ requirements.txt
-├ README.md
+└ README.md
 ```
 
 ## Setup Instructions
 
-1. Clone this repository or download the `autoinsight/` directory
-2. Install the required packages:
+1. Clone or download the repository:
+   ```bash
+   git clone https://github.com/gokulsanjayreddy/AutoInsight.git
+   cd AutoInsight
+   ```
+
+2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Run the app:
+
+3. Run the application:
    ```bash
    streamlit run app.py
    ```
-4. Open your web browser and navigate to `http://localhost:8501`
-5. Upload a CSV file and follow the sidebar controls
+
+4. Open `http://localhost:8501` in your browser.
 
 ## Usage
 
-### Phase 1 — Upload & Profiling
-- Upload any CSV file via the sidebar file uploader
-- View automatic column type inference (numeric, categorical, datetime, boolean)
-- See dataset profiling: row/column count, memory usage, missing value percentages, duplicate rows, cardinality
+1. **Upload Dataset**: Upload any CSV file directly on the main page, or click **Load Demo Dataset** to explore sample employee analytics data.
+2. **Review Profile**: Inspect row counts, column counts, memory usage, duplicate rows, and data health metrics.
+3. **Explore Categorized Results**: Scroll through categorized sections featuring standalone, dedicated charts.
+4. **Download Visualizations**:
+   - Click **Download All Plots (ZIP)** to download all generated plots organized by category in a single `.zip` file.
+   - Click **Download Plot (PNG)** under any individual card to save a specific visualization.
 
-### Phase 2 — EDA (Exploratory Data Analysis)
-The app provides 6 tabbed analysis sections:
+## Testing and Quality Checks
 
-- **Overview** — Dataset statistics (rows, columns, memory, duplicates, missing values, column type counts)
-- **Distributions** — Histograms with KDE for all numeric columns (matplotlib + plotly interactive)
-- **Categorical Charts** — Bar charts for categorical columns (top categories)
-- **Correlations** — Correlation heatmap (matplotlib + plotly) + top correlated pairs listing
-- **Scatter Plots** — Pairwise scatter plots for top correlated numeric pairs (matplotlib + plotly interactive)
-- **Target Relationships** — Box plots, bar plots, scatter plots between features and target column
+Run the automated test suite and linters:
 
-All charts display as images with descriptive titles. Both static (matplotlib/seaborn) and interactive (plotly) versions are available.
+```bash
+# Run unit and pipeline tests
+pytest tests/ --tb=short
 
-### Phase 3 — Report
-- Download a summary of your analysis
+# Lint check
+ruff check .
+
+# Type check
+mypy modules/ app.py --ignore-missing-imports
+```
 
 ## Notes
 
-- All processing is done locally — no internet connection or API keys required
-- Designed to produce useful results quickly for typical datasets
-- Every function has type hints and docstrings
-- All plotting functions return figures for Streamlit rendering
+- Processing runs entirely locally — no external API keys or remote servers required.
+- Uses `matplotlib.use("Agg")` for headless reliability in CI and local deployments.
+- Plot generation is cached in session state for instant interactions and downloads.

@@ -9,24 +9,24 @@ on:
 jobs:
   test-and-lint:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff mypy streamlit pytest
+          pip install ruff mypy pytest
 
       - name: Lint with ruff
         run: ruff check .
@@ -35,8 +35,9 @@ jobs:
         run: mypy modules/ app.py --ignore-missing-imports
 
       - name: Test with pytest
-        run: pytest --tb=short || echo "No test files found - skipping"
+        run: pytest tests/ --tb=short
 
-      - name: Verify streamlit app runs
+      - name: Verify streamlit app startup
         run: |
-          timeout 45 streamlit run app.py --server.headless true --browser.serverAddressOnConnectionError="" 2>/dev/null || echo "App verification completed - streamlit runtime check"
+          python -c "import app, modules.data_loader, modules.eda; print('Application modules verified successfully')"
+          timeout 20 streamlit run app.py --server.headless true --server.port 8501 > /dev/null 2>&1 || true
