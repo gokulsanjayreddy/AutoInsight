@@ -35,6 +35,8 @@ jobs:
         run: mypy modules/ app.py --ignore-missing-imports
 
       - name: Test with pytest
+        env:
+          PYTHONPATH: .
         run: pytest tests/ --tb=short
 
       - name: Verify streamlit app startup

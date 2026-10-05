@@ -49,6 +49,8 @@ jobs:
         run: mypy modules/ app.py --ignore-missing-imports
 
       - name: Run unit tests
+        env:
+          PYTHONPATH: .
         run: pytest tests/ --tb=short
 
       - name: Add label for good first issue
