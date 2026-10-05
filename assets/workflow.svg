@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 200" width="1100" height="200" role="img" aria-labelledby="t d">
+  <title id="t">AutoInsight workflow</title>
+  <desc id="d">Upload a CSV, profile it, analyze it, visualize it, then export PNG files or a ZIP archive</desc>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0L10 5L0 10z" fill="#38bdf8"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="200" rx="12" fill="#0f172a"/>
+  <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">
+    <g>
+      <rect x="30" y="50" width="170" height="100" rx="10" fill="#14213d" stroke="#2b4170"/>
+      <text x="115" y="48" font-size="12" fill="#38bdf8" letter-spacing="2">01</text>
+      <text x="115" y="95" font-size="19" font-weight="600" fill="#f8fafc">Upload</text>
+      <text x="115" y="120" font-size="13" fill="#94a3b8">CSV file or demo data</text>
+    </g>
+    <g>
+      <rect x="240" y="50" width="170" height="100" rx="10" fill="#14213d" stroke="#2b4170"/>
+      <text x="325" y="48" font-size="12" fill="#38bdf8" letter-spacing="2">02</text>
+      <text x="325" y="95" font-size="19" font-weight="600" fill="#f8fafc">Profile</text>
+      <text x="325" y="120" font-size="13" fill="#94a3b8">types, missing, duplicates</text>
+    </g>
+    <g>
+      <rect x="450" y="50" width="170" height="100" rx="10" fill="#14213d" stroke="#2b4170"/>
+      <text x="535" y="48" font-size="12" fill="#38bdf8" letter-spacing="2">03</text>
+      <text x="535" y="95" font-size="19" font-weight="600" fill="#f8fafc">Analyze</text>
+      <text x="535" y="120" font-size="13" fill="#94a3b8">stats, outliers, correlation</text>
+    </g>
+    <g>
+      <rect x="660" y="50" width="170" height="100" rx="10" fill="#14213d" stroke="#2b4170"/>
+      <text x="745" y="48" font-size="12" fill="#38bdf8" letter-spacing="2">04</text>
+      <text x="745" y="95" font-size="19" font-weight="600" fill="#f8fafc">Visualize</text>
+      <text x="745" y="120" font-size="13" fill="#94a3b8">standalone charts</text>
+    </g>
+    <g>
+      <rect x="870" y="50" width="200" height="100" rx="10" fill="#1d4ed8" stroke="#38bdf8"/>
+      <text x="970" y="48" font-size="12" fill="#38bdf8" letter-spacing="2">05</text>
+      <text x="970" y="95" font-size="19" font-weight="600" fill="#ffffff">Export</text>
+      <text x="970" y="120" font-size="13" fill="#dbeafe">PNG per chart or one ZIP</text>
+    </g>
+  </g>
+  <g stroke="#38bdf8" stroke-width="2" marker-end="url(#arr)">
+    <line x1="202" y1="100" x2="236" y2="100"/>
+    <line x1="412" y1="100" x2="446" y2="100"/>
+    <line x1="622" y1="100" x2="656" y2="100"/>
+    <line x1="832" y1="100" x2="866" y2="100"/>
+  </g>
+</svg>
