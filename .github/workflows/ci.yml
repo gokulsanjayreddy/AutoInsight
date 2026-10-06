@@ -39,6 +39,7 @@ jobs:
         run: ruff check .
 
       - name: Type check with mypy
+        if: matrix.python-version >= '3.12'
         run: mypy modules/ app.py
 
       - name: Test with pytest

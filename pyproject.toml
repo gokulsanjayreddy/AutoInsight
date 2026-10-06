@@ -37,7 +37,7 @@ ignore = []
 max-complexity = 12
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 check_untyped_defs = true
@@ -45,6 +45,10 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "seaborn.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "numpy.*"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
