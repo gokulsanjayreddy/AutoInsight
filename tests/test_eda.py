@@ -44,10 +44,11 @@ class TestAutoInsightEDA(unittest.TestCase):
         self.assertIsInstance(fig, plt.Figure)
 
     def test_plot_distributions_separation(self):
-        figures = plot_distributions(self.df)
-        self.assertIsInstance(figures, list)
-        self.assertGreater(len(figures), 0)
-        for fig in figures:
+        results = plot_distributions(self.df)
+        self.assertIsInstance(results, list)
+        self.assertGreater(len(results), 0)
+        for col_name, fig in results:
+            self.assertIsInstance(col_name, str)
             self.assertIsInstance(fig, plt.Figure)
             self.assertGreaterEqual(len(fig.axes), 1)
 

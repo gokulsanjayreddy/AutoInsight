@@ -6,8 +6,11 @@ Displays categorized, strictly separated standalone figures with 1-click batch Z
 
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
-import numpy as np
+import html
+import io
+import re
+from typing import Any, cast
+
 import pandas as pd
 import streamlit as st
 
@@ -16,25 +19,26 @@ from modules.data_loader import (
     load_csv,
     profile_dataset,
 )
-from modules.eda import (
-    create_all_plots_zip,
-    fig_to_png_bytes,
-    plot_cat_cat_relationships,
-    plot_cat_num_relationships,
-    plot_categorical_bars,
-    plot_correlation_heatmap,
-    plot_distributions,
-    plot_missing_values,
-    plot_numeric_boxplots,
-    plot_pairwise_scatter,
-    plot_summary_statistics,
-)
+from modules.pipeline import generate_full_analysis
 
 st.set_page_config(
     page_title="AutoInsight - Automated Data Analysis",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+
+@st.cache_data
+def cached_load_csv(file_bytes: bytes) -> pd.DataFrame:
+    """Cached CSV parsing keyed on raw file bytes."""
+    return load_csv(io.BytesIO(file_bytes))
+
+
+@st.cache_data
+def cached_profile_dataset(df: pd.DataFrame) -> dict:
+    """Cached dataset profiling keyed on DataFrame content."""
+    return profile_dataset(df)
+
 
 st.markdown(
     """
@@ -45,7 +49,7 @@ st.markdown(
     header[data-testid="stHeader"] {
         display: none !important;
     }
-    
+
     .block-container {
         padding-top: 2rem !important;
         padding-bottom: 4rem !important;
@@ -76,19 +80,20 @@ st.markdown(
     .category-title {
         font-size: 1.3rem;
         font-weight: 700;
-        color: #0f172a;
+        color: var(--text-color, #0f172a);
         margin-top: 2.25rem;
         margin-bottom: 0.2rem;
     }
     .category-subtitle {
         font-size: 0.9rem;
-        color: #64748b;
+        color: var(--text-color, #64748b);
+        opacity: 0.85;
         margin-bottom: 1.2rem;
     }
 
     div[data-testid="stMetric"] {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--secondary-background-color, #ffffff);
+        border: 1px solid var(--border-color, #e2e8f0);
         padding: 0.9rem 1.15rem;
         border-radius: 8px;
     }
@@ -107,105 +112,27 @@ st.markdown(
 
 
 def render_plot_card(
-    fig: plt.Figure,
     title: str,
     download_filename: str,
     png_bytes: bytes,
     key: str,
-):
+) -> None:
     """Render a standalone plot inside a bordered container with a PNG download button."""
     with st.container(border=True):
         st.markdown(f"**{title}**")
-        st.pyplot(fig, use_container_width=True)
+        st.image(png_bytes, width="stretch")
         st.download_button(
             label="Download Plot (PNG)",
             data=png_bytes,
             file_name=f"{download_filename}.png",
             mime="image/png",
             key=key,
-            use_container_width=True,
+            width="stretch",
         )
 
 
-def generate_full_analysis(df: pd.DataFrame):
-    """Generate all figures and prepare in-memory ZIP package for download."""
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-
-    all_named_figures: list[tuple[str, str, plt.Figure]] = []
-    card_data: dict[str, list] = {}
-
-    fig_summary = plot_summary_statistics(df)
-    png_summary = fig_to_png_bytes(fig_summary)
-    all_named_figures.append(("00_summary", "summary_statistics_table", fig_summary))
-    card_data["summary"] = [(fig_summary, "Summary Statistics Table", "summary_statistics", png_summary)]
-
-    fig_missing = plot_missing_values(df)
-    if fig_missing is not None:
-        png_missing = fig_to_png_bytes(fig_missing)
-        all_named_figures.append(("00_summary", "missing_values_breakdown", fig_missing))
-        card_data["missing"] = [(fig_missing, "Missing Values Breakdown (%)", "missing_values", png_missing)]
-    else:
-        card_data["missing"] = []
-
-    dist_figs = plot_distributions(df)
-    card_data["dists"] = []
-    for col_name, fig in zip(num_cols[:len(dist_figs)], dist_figs):
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("01_univariate_numeric_distributions", f"dist_{col_name}", fig))
-        card_data["dists"].append((fig, f"Distribution: {col_name}", f"distribution_{col_name}", png))
-
-    boxplot_pairs = plot_numeric_boxplots(df)
-    card_data["boxplots"] = []
-    for col_name, fig in boxplot_pairs:
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("02_outlier_boxplots", f"boxplot_{col_name}", fig))
-        card_data["boxplots"].append((fig, f"Boxplot: {col_name}", f"boxplot_{col_name}", png))
-
-    cat_figs = plot_categorical_bars(df)
-    card_data["cats"] = []
-    for idx, fig in enumerate(cat_figs):
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("03_categorical_distributions", f"cat_distribution_{idx+1}", fig))
-        card_data["cats"].append((fig, f"Categorical Distribution {idx+1}", f"cat_dist_{idx+1}", png))
-
-    fig_corr = plot_correlation_heatmap(df)
-    png_corr = fig_to_png_bytes(fig_corr)
-    all_named_figures.append(("04_correlation_heatmap", "correlation_matrix", fig_corr))
-    card_data["corr"] = [(fig_corr, "Correlation Matrix", "correlation_heatmap", png_corr)]
-
-    scatter_figs = plot_pairwise_scatter(df)
-    card_data["scatters"] = []
-    for idx, fig in enumerate(scatter_figs):
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("05_numeric_relationships", f"scatter_pair_{idx+1}", fig))
-        card_data["scatters"].append((fig, f"Scatter Plot {idx+1}", f"scatter_pair_{idx+1}", png))
-
-    cat_num_pairs = plot_cat_num_relationships(df)
-    card_data["cat_num"] = []
-    for label, fig in cat_num_pairs:
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("06_cat_vs_numeric", f"cat_num_{label}", fig))
-        card_data["cat_num"].append((fig, f"Grouped Comparison: {label}", f"cat_num_{label}", png))
-
-    cat_cat_pairs = plot_cat_cat_relationships(df)
-    card_data["cat_cat"] = []
-    for label, fig in cat_cat_pairs:
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("07_cat_vs_cat", f"cat_cat_{label}", fig))
-        card_data["cat_cat"].append((fig, f"Cross-Tabulation: {label}", f"cat_cat_{label}", png))
-
-    zip_bytes = create_all_plots_zip(all_named_figures)
-    total_count = len(all_named_figures)
-
-    return {
-        "card_data": card_data,
-        "zip_bytes": zip_bytes,
-        "total_count": total_count,
-    }
-
-
-def main():
-    """Main application layout and execution."""
+def render_hero() -> None:
+    """Render hero header banner."""
     st.markdown(
         """
         <div class="hero-container">
@@ -216,62 +143,96 @@ def main():
         unsafe_allow_html=True,
     )
 
-    if "df" not in st.session_state:
-        st.session_state.df = None
-    if "source_name" not in st.session_state:
-        st.session_state.source_name = None
-    if "analysis_cache" not in st.session_state:
-        st.session_state.analysis_cache = None
-    if "cached_hash" not in st.session_state:
-        st.session_state.cached_hash = None
 
+def init_session_state() -> None:
+    """Initialize necessary Streamlit session state variables."""
+    defaults: dict[str, Any] = {
+        "df": None,
+        "source_name": None,
+        "analysis_cache": None,
+        "cached_hash": None,
+        "uploaded_file_id": None,
+        "uploader_key": 0,
+    }
+    for key, val in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = val
+
+
+def render_file_controls() -> None:
+    """Render file uploader and Demo/Reset control buttons."""
     upload_col, sample_col = st.columns([3, 1], gap="medium")
 
     with upload_col:
+        uploader_widget_key = f"file_uploader_{st.session_state.uploader_key}"
         uploaded_file = st.file_uploader(
             "Upload a CSV dataset:",
             type=["csv"],
-            key="file_uploader_main",
+            key=uploader_widget_key,
         )
         if uploaded_file is not None:
-            try:
-                st.session_state.df = load_csv(uploaded_file)
-                st.session_state.source_name = uploaded_file.name
-            except ValueError as e:
-                st.error(f"Error loading CSV file: {e}")
+            file_bytes = uploaded_file.getvalue()
+            current_file_id = f"{uploaded_file.name}_{uploaded_file.size}_{hash(file_bytes[:4096])}"
+            if st.session_state.uploaded_file_id != current_file_id:
+                try:
+                    st.session_state.df = cached_load_csv(file_bytes)
+                    st.session_state.source_name = uploaded_file.name
+                    st.session_state.uploaded_file_id = current_file_id
+                    st.session_state.analysis_cache = None
+                    st.session_state.cached_hash = None
+                except ValueError as e:
+                    st.session_state.df = None
+                    st.session_state.source_name = None
+                    st.session_state.uploaded_file_id = None
+                    st.session_state.analysis_cache = None
+                    st.session_state.cached_hash = None
+                    st.error(f"Error loading CSV file: {e}")
 
     with sample_col:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        if st.button("Load Demo Dataset", use_container_width=True):
+        if st.button("Load Demo Dataset", width="stretch"):
             st.session_state.df = get_sample_dataset()
             st.session_state.source_name = "sample_employee_analytics.csv"
-            st.rerun()
-
-        if st.session_state.df is not None and st.button("Reset Dataset", use_container_width=True):
-            st.session_state.df = None
-            st.session_state.source_name = None
+            st.session_state.uploaded_file_id = "demo"
+            st.session_state.uploader_key += 1
             st.session_state.analysis_cache = None
             st.session_state.cached_hash = None
             st.rerun()
 
-    if st.session_state.df is None:
-        st.info("Upload a CSV file above or click Load Demo Dataset to begin analysis.")
-        return
+        if st.session_state.df is not None and st.button("Reset Dataset", width="stretch"):
+            st.session_state.df = None
+            st.session_state.source_name = None
+            st.session_state.analysis_cache = None
+            st.session_state.cached_hash = None
+            st.session_state.uploaded_file_id = None
+            st.session_state.uploader_key += 1
+            st.rerun()
 
-    df: pd.DataFrame = st.session_state.df
-    source_name = st.session_state.source_name or "dataset"
 
-    profiling = profile_dataset(df)
-    total_rows = profiling.get("rows", len(df))
-    total_cols = profiling.get("columns", len(df.columns))
+def render_overview_metrics(profiling: dict[str, Any], source_name: str) -> None:
+    """Render metric overview cards for dataset health."""
+    escaped_source_name = html.escape(source_name)
+    total_rows = profiling.get("rows", 0)
+    total_cols = profiling.get("columns", 0)
     memory_mb = profiling.get("memory_mb", 0.0)
     dup_rows = profiling.get("duplicate_rows", 0)
+    id_cols = profiling.get("id_columns", [])
+    col_types = profiling.get("column_types", {})
 
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    cat_cols = [c for c in df.columns if c not in num_cols]
+    num_cols = [c for c, t in col_types.items() if t == "numeric"]
+    cat_cols = [
+        c for c, t in col_types.items()
+        if t in ("categorical", "boolean") and c not in id_cols
+    ]
 
-    st.markdown("<div class='category-title'>Overview and Data Health</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='category-subtitle'>Dataset: <strong>{source_name}</strong></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='category-title'>Overview and Data Health</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"<div class='category-subtitle'>Dataset: <strong>{escaped_source_name}</strong></div>",
+        unsafe_allow_html=True,
+    )
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1:
@@ -287,170 +248,188 @@ def main():
     with m6:
         st.metric("Duplicate Rows", dup_rows)
 
-    current_hash = f"{len(df)}_{list(df.columns)}_{source_name}"
-    if st.session_state.analysis_cache is None or st.session_state.cached_hash != current_hash:
-        with st.spinner("Analyzing dataset and generating charts..."):
-            st.session_state.analysis_cache = generate_full_analysis(df)
-            st.session_state.cached_hash = current_hash
 
-    analysis = st.session_state.analysis_cache
-    card_data = analysis["card_data"]
-    zip_bytes = analysis["zip_bytes"]
-    total_plots = analysis["total_count"]
+def render_summary_section(card_data: dict[str, list[tuple[str, str, bytes]]]) -> None:
+    """Render summary statistics and missing value cards."""
+    st.markdown(
+        "<div class='category-title'>Summary Statistics and Missing Values</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div class='category-subtitle'>"
+        "Detailed statistical summary and missing value breakdown.</div>",
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("---")
+    c1, c2 = st.columns([3, 2] if card_data.get("missing") else [1, 0.01])
+    with c1:
+        for title, fname, png in card_data.get("summary", []):
+            render_plot_card(title, fname, png, "sec1_summary")
+    if card_data.get("missing"):
+        with c2:
+            for title, fname, png in card_data["missing"]:
+                render_plot_card(title, fname, png, "sec1_missing")
+
+
+def render_section(
+    key: str,
+    title: str,
+    subtitle: str,
+    cards: list[tuple[str, str, bytes]],
+    key_prefix: str,
+) -> None:
+    """Render a titled section containing plot cards in a responsive grid."""
+    if not cards:
+        return
+
+    st.markdown(f"<div class='category-title'>{title}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='category-subtitle'>{subtitle}</div>", unsafe_allow_html=True)
+
+    if key == "corr":
+        for title_c, fname_c, png_c in cards:
+            render_plot_card(title_c, fname_c, png_c, key_prefix)
+        return
+
+    for i in range(0, len(cards), 2):
+        col_a, col_b = st.columns(2)
+        title_a, fname_a, png_a = cards[i]
+        with col_a:
+            render_plot_card(title_a, fname_a, png_a, f"{key_prefix}_{i}")
+
+        if i + 1 < len(cards):
+            title_b, fname_b, png_b = cards[i + 1]
+            with col_b:
+                render_plot_card(title_b, fname_b, png_b, f"{key_prefix}_{i+1}")
+
+
+def render_download_banner(
+    zip_bytes: bytes,
+    clean_dl_name: str,
+    total_plots: int,
+    btn_key: str,
+) -> None:
+    """Render batch ZIP download button with summary caption."""
     col_btn, col_info = st.columns([1, 2])
     with col_btn:
         st.download_button(
             label=f"Download All Plots ({total_plots} Files, ZIP)",
             data=zip_bytes,
-            file_name=f"autoinsight_eda_{source_name.replace('.csv', '')}.zip",
+            file_name=f"autoinsight_eda_{clean_dl_name}.zip",
             mime="application/zip",
-            use_container_width=True,
+            width="stretch",
             type="primary",
-            key="btn_dl_all_top",
+            key=btn_key,
         )
     with col_info:
         st.markdown(
-            f"<div style='padding-top: 0.5rem; color: #475569;'>Generated <strong>{total_plots}</strong> separated standalone charts across all column combinations.</div>",
+            f"<div style='padding-top: 0.5rem; color: var(--text-color, #475569);'>"
+            f"Generated <strong>{total_plots}</strong> separated standalone charts "
+            "across all column combinations.</div>",
             unsafe_allow_html=True,
         )
 
-    # 1. Summary Statistics & Data Health
-    st.markdown("<div class='category-title'>Summary Statistics and Missing Values</div>", unsafe_allow_html=True)
-    st.markdown("<div class='category-subtitle'>Detailed statistical summary and missing value breakdown.</div>", unsafe_allow_html=True)
 
-    c1, c2 = st.columns([3, 2] if card_data.get("missing") else [1, 0.01])
-    with c1:
-        for fig, title, fname, png in card_data["summary"]:
-            render_plot_card(fig, title, fname, png, "sec1_summary")
-    if card_data.get("missing"):
-        with c2:
-            for fig, title, fname, png in card_data["missing"]:
-                render_plot_card(fig, title, fname, png, "sec1_missing")
+SECTION_CONFIG = [
+    (
+        "dists",
+        "Numeric Distributions",
+        "Histograms with kernel density estimation, mean, and median.",
+        "sec2_dist",
+    ),
+    (
+        "boxplots",
+        "Outlier Boxplots",
+        "Box and whisker plots highlighting median, interquartile range, and outliers.",
+        "sec3_box",
+    ),
+    (
+        "cats",
+        "Categorical Distributions",
+        "Frequency distributions and proportions for categorical variables.",
+        "sec4_cat",
+    ),
+    (
+        "corr",
+        "Correlation Matrix",
+        "Pearson correlation matrix across all numeric features.",
+        "sec5_corr",
+    ),
+    (
+        "scatters",
+        "Numeric vs Numeric Relationships",
+        "Bivariate scatter plots with linear trendlines for numeric pairs.",
+        "sec6_scat",
+    ),
+    (
+        "cat_num",
+        "Categorical vs Numeric Relationships",
+        "Comparative distributions of numeric metrics grouped by category.",
+        "sec7_cn",
+    ),
+    (
+        "cat_cat",
+        "Categorical vs Categorical Interactions",
+        "Cross-tabulations demonstrating relationships between categorical variables.",
+        "sec8_cc",
+    ),
+]
 
-    # 2. Univariate Numeric Distributions
-    dists = card_data.get("dists", [])
-    if dists:
-        st.markdown("<div class='category-title'>Numeric Distributions</div>", unsafe_allow_html=True)
-        st.markdown("<div class='category-subtitle'>Histograms with kernel density estimation, mean, and median.</div>", unsafe_allow_html=True)
 
-        for i in range(0, len(dists), 2):
-            col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = dists[i]
-            with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec2_dist_{i}")
+def ensure_analysis(df: pd.DataFrame, source_name: str) -> dict[str, Any]:
+    """Execute EDA pipeline if cache is stale or missing."""
+    h_data = pd.util.hash_pandas_object(df, index=True).sum()
+    h_cols = list(df.columns)
+    h_dtypes = [str(t) for t in df.dtypes]
+    current_hash = f"{h_data}_{h_cols}_{h_dtypes}_{source_name}"
 
-            if i + 1 < len(dists):
-                fig_b, title_b, fname_b, png_b = dists[i + 1]
-                with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec2_dist_{i+1}")
+    if st.session_state.analysis_cache is None or st.session_state.cached_hash != current_hash:
+        progress_bar = st.progress(0, text="Analyzing dataset and generating charts...")
 
-    # 3. Outlier Boxplots
-    boxplots = card_data.get("boxplots", [])
-    if boxplots:
-        st.markdown("<div class='category-title'>Outlier Boxplots</div>", unsafe_allow_html=True)
-        st.markdown("<div class='category-subtitle'>Box and whisker plots highlighting median, interquartile range, and outliers.</div>", unsafe_allow_html=True)
+        def update_progress(pct: float, msg: str) -> None:
+            progress_bar.progress(int(pct * 100), text=msg)
 
-        for i in range(0, len(boxplots), 2):
-            col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = boxplots[i]
-            with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec3_box_{i}")
+        st.session_state.analysis_cache = generate_full_analysis(
+            df,
+            progress_callback=update_progress,
+        )
+        st.session_state.cached_hash = current_hash
+        progress_bar.empty()
 
-            if i + 1 < len(boxplots):
-                fig_b, title_b, fname_b, png_b = boxplots[i + 1]
-                with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec3_box_{i+1}")
+    return cast(dict[str, Any], st.session_state.analysis_cache)
 
-    # 4. Categorical Distributions
-    cats = card_data.get("cats", [])
-    if cats:
-        st.markdown("<div class='category-title'>Categorical Distributions</div>", unsafe_allow_html=True)
-        st.markdown("<div class='category-subtitle'>Frequency distributions and proportions for categorical variables.</div>", unsafe_allow_html=True)
 
-        for i in range(0, len(cats), 2):
-            col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = cats[i]
-            with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec4_cat_{i}")
+def main() -> None:
+    """Main application layout and execution."""
+    render_hero()
+    init_session_state()
+    render_file_controls()
 
-            if i + 1 < len(cats):
-                fig_b, title_b, fname_b, png_b = cats[i + 1]
-                with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec4_cat_{i+1}")
+    if st.session_state.df is None:
+        st.info("Upload a CSV file above or click Load Demo Dataset to begin analysis.")
+        return
 
-    # 5. Correlation Matrix
-    corrs = card_data.get("corr", [])
-    if corrs:
-        st.markdown("<div class='category-title'>Correlation Matrix</div>", unsafe_allow_html=True)
-        st.markdown("<div class='category-subtitle'>Pearson correlation matrix across all numeric features.</div>", unsafe_allow_html=True)
-        for fig, title, fname, png in corrs:
-            render_plot_card(fig, title, fname, png, "sec5_corr")
+    df: pd.DataFrame = st.session_state.df
+    source_name = st.session_state.source_name or "dataset"
+    clean_dl_name = re.sub(r"(?i)\.csv$", "", source_name)
+    clean_dl_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", clean_dl_name)
 
-    # 6. Numeric vs Numeric Relationships
-    scatters = card_data.get("scatters", [])
-    if scatters:
-        st.markdown("<div class='category-title'>Numeric vs Numeric Relationships</div>", unsafe_allow_html=True)
-        st.markdown("<div class='category-subtitle'>Bivariate scatter plots with linear trendlines for numeric pairs.</div>", unsafe_allow_html=True)
+    profiling = cached_profile_dataset(df)
+    render_overview_metrics(profiling, source_name)
 
-        for i in range(0, len(scatters), 2):
-            col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = scatters[i]
-            with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec6_scat_{i}")
-
-            if i + 1 < len(scatters):
-                fig_b, title_b, fname_b, png_b = scatters[i + 1]
-                with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec6_scat_{i+1}")
-
-    # 7. Categorical vs Numeric Relationships
-    cat_nums = card_data.get("cat_num", [])
-    if cat_nums:
-        st.markdown("<div class='category-title'>Categorical vs Numeric Relationships</div>", unsafe_allow_html=True)
-        st.markdown("<div class='category-subtitle'>Comparative distributions of numeric metrics grouped by category.</div>", unsafe_allow_html=True)
-
-        for i in range(0, len(cat_nums), 2):
-            col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = cat_nums[i]
-            with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec7_cn_{i}")
-
-            if i + 1 < len(cat_nums):
-                fig_b, title_b, fname_b, png_b = cat_nums[i + 1]
-                with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec7_cn_{i+1}")
-
-    # 8. Categorical vs Categorical Interactions
-    cat_cats = card_data.get("cat_cat", [])
-    if cat_cats:
-        st.markdown("<div class='category-title'>Categorical vs Categorical Interactions</div>", unsafe_allow_html=True)
-        st.markdown("<div class='category-subtitle'>Cross-tabulations demonstrating relationships between categorical variables.</div>", unsafe_allow_html=True)
-
-        for i in range(0, len(cat_cats), 2):
-            col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = cat_cats[i]
-            with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec8_cc_{i}")
-
-            if i + 1 < len(cat_cats):
-                fig_b, title_b, fname_b, png_b = cat_cats[i + 1]
-                with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec8_cc_{i+1}")
+    analysis = ensure_analysis(df, source_name)
+    card_data = analysis["card_data"]
+    zip_bytes = analysis["zip_bytes"]
+    total_plots = analysis["total_count"]
 
     st.markdown("---")
-    bot_col, _ = st.columns([1, 2])
-    with bot_col:
-        st.download_button(
-            label=f"Download All Plots ({total_plots} Files, ZIP)",
-            data=zip_bytes,
-            file_name=f"autoinsight_eda_{source_name.replace('.csv', '')}.zip",
-            mime="application/zip",
-            use_container_width=True,
-            type="primary",
-            key="btn_dl_all_bottom",
-        )
+    render_download_banner(zip_bytes, clean_dl_name, total_plots, "btn_dl_all_top")
+    render_summary_section(card_data)
+
+    for key, title, subtitle, prefix in SECTION_CONFIG:
+        render_section(key, title, subtitle, card_data.get(key, []), prefix)
+
+    st.markdown("---")
+    render_download_banner(zip_bytes, clean_dl_name, total_plots, "btn_dl_all_bottom")
 
 
 if __name__ == "__main__":

@@ -9,11 +9,13 @@
 
 2. **Create a new file or modify existing files** following the project's coding style.
 
-3. **Run tests locally** to ensure your changes don't break existing functionality:
+3. **Run tests, linting, and type checks locally**:
    ```bash
-   pip install -r requirements.txt
-   # Run the app and test manually
-   streamlit run app.py
+   pip install -r requirements-dev.txt
+   ruff check .
+   ruff format --check .
+   mypy modules/ app.py
+   pytest --cov=modules
    ```
 
 4. **Commit your changes** with a clear commit message:
@@ -33,11 +35,12 @@
 
 - Add type hints to all function signatures
 - Add docstrings to all public functions
-- Keep functions under ~50 lines; break up long logic into helpers
-- All plotting functions should return a matplotlib Figure object
-- Include a `requirements.txt` with pinned versions
-- Test your changes with different CSV file types
-- Ensure the app runs locally with `streamlit run app.py`
+- Keep functions under ~50 lines; break up long logic into focused helpers
+- All plotting functions should return a matplotlib Figure or list of (name, Figure) tuples
+- Pinned version ranges are enforced in `requirements.txt` (`>=X.Y,<Z.W`)
+- Maintain $\ge 80\%$ test coverage across `modules/`
+- Test your changes with different CSV file types (delimiters, encodings, edge cases)
+- Ensure the app runs cleanly with `streamlit run app.py`
 
 ## Report Issues
 
