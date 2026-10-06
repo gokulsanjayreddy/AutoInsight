@@ -225,15 +225,6 @@ Those tools produce one HTML report. AutoInsight is an interactive app that give
 
 <br>
 
-## Roadmap
-
-- [ ] Excel (`.xlsx`) and JSON upload
-- [ ] Optional target-column analysis
-- [ ] Interactive Plotly versions of the charts
-- [ ] Exportable PDF or HTML summary report
-- [ ] Time-series charts for datetime columns
-- [ ] Plain-English summaries of key findings
-
 Have an idea? [Open an issue](https://github.com/gokulsanjayreddy/AutoInsight/issues).
 
 <br>
