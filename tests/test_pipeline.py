@@ -1,6 +1,10 @@
 """End-to-end pipeline simulation test for AutoInsight."""
 
+import io
 import unittest
+import zipfile
+
+from PIL import Image
 
 from modules.data_loader import get_sample_dataset, profile_dataset
 from modules.eda import (
@@ -62,7 +66,18 @@ class TestFullPipeline(unittest.TestCase):
         self.assertGreaterEqual(len(all_named_figures), 20)
 
         zip_bytes = create_all_plots_zip(all_named_figures)
-        self.assertGreater(len(zip_bytes), 10000)
+
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            namelist = zf.namelist()
+            self.assertGreaterEqual(len(namelist), 20)
+            for fname in namelist:
+                self.assertTrue(fname.endswith(".png"))
+                png_data = zf.read(fname)
+                self.assertTrue(png_data.startswith(b"\x89PNG\r\n\x1a\n"))
+                # Confirm valid decodable image
+                with Image.open(io.BytesIO(png_data)) as img:
+                    self.assertGreater(img.width, 0)
+                    self.assertGreater(img.height, 0)
 
 
 if __name__ == "__main__":
