@@ -6,7 +6,6 @@ Displays categorized, strictly separated standalone figures with 1-click batch Z
 
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -15,25 +14,26 @@ from modules.data_loader import (
     load_csv,
     profile_dataset,
 )
-from modules.eda import (
-    create_all_plots_zip,
-    fig_to_png_bytes,
-    plot_cat_cat_relationships,
-    plot_cat_num_relationships,
-    plot_categorical_bars,
-    plot_correlation_heatmap,
-    plot_distributions,
-    plot_missing_values,
-    plot_numeric_boxplots,
-    plot_pairwise_scatter,
-    plot_summary_statistics,
-)
+from modules.pipeline import generate_full_analysis
 
 st.set_page_config(
     page_title="AutoInsight - Automated Data Analysis",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+
+@st.cache_data
+def cached_load_csv(file_bytes: bytes) -> pd.DataFrame:
+    """Cached CSV parsing keyed on raw file bytes."""
+    import io
+    return load_csv(io.BytesIO(file_bytes))
+
+
+@st.cache_data
+def cached_profile_dataset(df: pd.DataFrame) -> dict:
+    """Cached dataset profiling keyed on DataFrame content."""
+    return profile_dataset(df)
 
 st.markdown(
     """
@@ -107,7 +107,6 @@ st.markdown(
 
 
 def render_plot_card(
-    fig: plt.Figure,
     title: str,
     download_filename: str,
     png_bytes: bytes,
@@ -116,7 +115,7 @@ def render_plot_card(
     """Render a standalone plot inside a bordered container with a PNG download button."""
     with st.container(border=True):
         st.markdown(f"**{title}**")
-        st.pyplot(fig, use_container_width=True)
+        st.image(png_bytes, use_container_width=True)
         st.download_button(
             label="Download Plot (PNG)",
             data=png_bytes,
@@ -125,84 +124,6 @@ def render_plot_card(
             key=key,
             use_container_width=True,
         )
-
-
-def generate_full_analysis(df: pd.DataFrame):
-    """Generate all figures and prepare in-memory ZIP package for download."""
-    profiling = profile_dataset(df)
-    id_cols = profiling.get("id_columns", [])
-
-    all_named_figures: list[tuple[str, str, plt.Figure]] = []
-    card_data: dict[str, list] = {}
-
-    fig_summary = plot_summary_statistics(df)
-    png_summary = fig_to_png_bytes(fig_summary)
-    all_named_figures.append(("00_summary", "summary_statistics_table", fig_summary))
-    card_data["summary"] = [(fig_summary, "Summary Statistics Table", "summary_statistics", png_summary)]
-
-    fig_missing = plot_missing_values(df)
-    if fig_missing is not None:
-        png_missing = fig_to_png_bytes(fig_missing)
-        all_named_figures.append(("00_summary", "missing_values_breakdown", fig_missing))
-        card_data["missing"] = [(fig_missing, "Missing Values Breakdown (%)", "missing_values", png_missing)]
-    else:
-        card_data["missing"] = []
-
-    dist_pairs = plot_distributions(df)
-    card_data["dists"] = []
-    for col_name, fig in dist_pairs:
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("01_univariate_numeric_distributions", f"dist_{col_name}", fig))
-        card_data["dists"].append((fig, f"Distribution: {col_name}", f"distribution_{col_name}", png))
-
-    boxplot_pairs = plot_numeric_boxplots(df)
-    card_data["boxplots"] = []
-    for col_name, fig in boxplot_pairs:
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("02_outlier_boxplots", f"boxplot_{col_name}", fig))
-        card_data["boxplots"].append((fig, f"Boxplot: {col_name}", f"boxplot_{col_name}", png))
-
-    cat_figs = plot_categorical_bars(df, id_cols=id_cols)
-    card_data["cats"] = []
-    for idx, fig in enumerate(cat_figs):
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("03_categorical_distributions", f"cat_distribution_{idx+1}", fig))
-        card_data["cats"].append((fig, f"Categorical Distribution {idx+1}", f"cat_dist_{idx+1}", png))
-
-    fig_corr = plot_correlation_heatmap(df)
-    png_corr = fig_to_png_bytes(fig_corr)
-    all_named_figures.append(("04_correlation_heatmap", "correlation_matrix", fig_corr))
-    card_data["corr"] = [(fig_corr, "Correlation Matrix", "correlation_heatmap", png_corr)]
-
-    scatter_figs = plot_pairwise_scatter(df)
-    card_data["scatters"] = []
-    for idx, fig in enumerate(scatter_figs):
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("05_numeric_relationships", f"scatter_pair_{idx+1}", fig))
-        card_data["scatters"].append((fig, f"Scatter Plot {idx+1}", f"scatter_pair_{idx+1}", png))
-
-    cat_num_pairs = plot_cat_num_relationships(df, id_cols=id_cols)
-    card_data["cat_num"] = []
-    for label, fig in cat_num_pairs:
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("06_cat_vs_numeric", f"cat_num_{label}", fig))
-        card_data["cat_num"].append((fig, f"Grouped Comparison: {label}", f"cat_num_{label}", png))
-
-    cat_cat_pairs = plot_cat_cat_relationships(df, id_cols=id_cols)
-    card_data["cat_cat"] = []
-    for label, fig in cat_cat_pairs:
-        png = fig_to_png_bytes(fig)
-        all_named_figures.append(("07_cat_vs_cat", f"cat_cat_{label}", fig))
-        card_data["cat_cat"].append((fig, f"Cross-Tabulation: {label}", f"cat_cat_{label}", png))
-
-    zip_bytes = create_all_plots_zip(all_named_figures)
-    total_count = len(all_named_figures)
-
-    return {
-        "card_data": card_data,
-        "zip_bytes": zip_bytes,
-        "total_count": total_count,
-    }
 
 
 def main():
@@ -247,7 +168,7 @@ def main():
             current_file_id = f"{uploaded_file.name}_{uploaded_file.size}_{hash(file_bytes[:4096])}"
             if st.session_state.uploaded_file_id != current_file_id:
                 try:
-                    st.session_state.df = load_csv(uploaded_file)
+                    st.session_state.df = cached_load_csv(file_bytes)
                     st.session_state.source_name = uploaded_file.name
                     st.session_state.uploaded_file_id = current_file_id
                     st.session_state.analysis_cache = None
@@ -290,7 +211,7 @@ def main():
     clean_dl_name = re.sub(r"(?i)\.csv$", "", source_name)
     clean_dl_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", clean_dl_name)
 
-    profiling = profile_dataset(df)
+    profiling = cached_profile_dataset(df)
     total_rows = profiling.get("rows", len(df))
     total_cols = profiling.get("columns", len(df.columns))
     memory_mb = profiling.get("memory_mb", 0.0)
@@ -320,9 +241,17 @@ def main():
 
     current_hash = f"{pd.util.hash_pandas_object(df, index=True).sum()}_{list(df.columns)}_{[str(t) for t in df.dtypes]}_{source_name}"
     if st.session_state.analysis_cache is None or st.session_state.cached_hash != current_hash:
-        with st.spinner("Analyzing dataset and generating charts..."):
-            st.session_state.analysis_cache = generate_full_analysis(df)
-            st.session_state.cached_hash = current_hash
+        progress_bar = st.progress(0, text="Analyzing dataset and generating charts...")
+
+        def update_progress(pct: float, msg: str) -> None:
+            progress_bar.progress(int(pct * 100), text=msg)
+
+        st.session_state.analysis_cache = generate_full_analysis(
+            df,
+            progress_callback=update_progress,
+        )
+        st.session_state.cached_hash = current_hash
+        progress_bar.empty()
 
     analysis = st.session_state.analysis_cache
     card_data = analysis["card_data"]
@@ -353,12 +282,12 @@ def main():
 
     c1, c2 = st.columns([3, 2] if card_data.get("missing") else [1, 0.01])
     with c1:
-        for fig, title, fname, png in card_data["summary"]:
-            render_plot_card(fig, title, fname, png, "sec1_summary")
+        for title, fname, png in card_data["summary"]:
+            render_plot_card(title, fname, png, "sec1_summary")
     if card_data.get("missing"):
         with c2:
-            for fig, title, fname, png in card_data["missing"]:
-                render_plot_card(fig, title, fname, png, "sec1_missing")
+            for title, fname, png in card_data["missing"]:
+                render_plot_card(title, fname, png, "sec1_missing")
 
     # 2. Univariate Numeric Distributions
     dists = card_data.get("dists", [])
@@ -368,14 +297,14 @@ def main():
 
         for i in range(0, len(dists), 2):
             col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = dists[i]
+            title_a, fname_a, png_a = dists[i]
             with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec2_dist_{i}")
+                render_plot_card(title_a, fname_a, png_a, f"sec2_dist_{i}")
 
             if i + 1 < len(dists):
-                fig_b, title_b, fname_b, png_b = dists[i + 1]
+                title_b, fname_b, png_b = dists[i + 1]
                 with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec2_dist_{i+1}")
+                    render_plot_card(title_b, fname_b, png_b, f"sec2_dist_{i+1}")
 
     # 3. Outlier Boxplots
     boxplots = card_data.get("boxplots", [])
@@ -385,14 +314,14 @@ def main():
 
         for i in range(0, len(boxplots), 2):
             col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = boxplots[i]
+            title_a, fname_a, png_a = boxplots[i]
             with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec3_box_{i}")
+                render_plot_card(title_a, fname_a, png_a, f"sec3_box_{i}")
 
             if i + 1 < len(boxplots):
-                fig_b, title_b, fname_b, png_b = boxplots[i + 1]
+                title_b, fname_b, png_b = boxplots[i + 1]
                 with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec3_box_{i+1}")
+                    render_plot_card(title_b, fname_b, png_b, f"sec3_box_{i+1}")
 
     # 4. Categorical Distributions
     cats = card_data.get("cats", [])
@@ -402,22 +331,22 @@ def main():
 
         for i in range(0, len(cats), 2):
             col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = cats[i]
+            title_a, fname_a, png_a = cats[i]
             with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec4_cat_{i}")
+                render_plot_card(title_a, fname_a, png_a, f"sec4_cat_{i}")
 
             if i + 1 < len(cats):
-                fig_b, title_b, fname_b, png_b = cats[i + 1]
+                title_b, fname_b, png_b = cats[i + 1]
                 with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec4_cat_{i+1}")
+                    render_plot_card(title_b, fname_b, png_b, f"sec4_cat_{i+1}")
 
     # 5. Correlation Matrix
     corrs = card_data.get("corr", [])
     if corrs:
         st.markdown("<div class='category-title'>Correlation Matrix</div>", unsafe_allow_html=True)
         st.markdown("<div class='category-subtitle'>Pearson correlation matrix across all numeric features.</div>", unsafe_allow_html=True)
-        for fig, title, fname, png in corrs:
-            render_plot_card(fig, title, fname, png, "sec5_corr")
+        for title, fname, png in corrs:
+            render_plot_card(title, fname, png, "sec5_corr")
 
     # 6. Numeric vs Numeric Relationships
     scatters = card_data.get("scatters", [])
@@ -427,14 +356,14 @@ def main():
 
         for i in range(0, len(scatters), 2):
             col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = scatters[i]
+            title_a, fname_a, png_a = scatters[i]
             with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec6_scat_{i}")
+                render_plot_card(title_a, fname_a, png_a, f"sec6_scat_{i}")
 
             if i + 1 < len(scatters):
-                fig_b, title_b, fname_b, png_b = scatters[i + 1]
+                title_b, fname_b, png_b = scatters[i + 1]
                 with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec6_scat_{i+1}")
+                    render_plot_card(title_b, fname_b, png_b, f"sec6_scat_{i+1}")
 
     # 7. Categorical vs Numeric Relationships
     cat_nums = card_data.get("cat_num", [])
@@ -444,14 +373,14 @@ def main():
 
         for i in range(0, len(cat_nums), 2):
             col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = cat_nums[i]
+            title_a, fname_a, png_a = cat_nums[i]
             with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec7_cn_{i}")
+                render_plot_card(title_a, fname_a, png_a, f"sec7_cn_{i}")
 
             if i + 1 < len(cat_nums):
-                fig_b, title_b, fname_b, png_b = cat_nums[i + 1]
+                title_b, fname_b, png_b = cat_nums[i + 1]
                 with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec7_cn_{i+1}")
+                    render_plot_card(title_b, fname_b, png_b, f"sec7_cn_{i+1}")
 
     # 8. Categorical vs Categorical Interactions
     cat_cats = card_data.get("cat_cat", [])
@@ -461,14 +390,14 @@ def main():
 
         for i in range(0, len(cat_cats), 2):
             col_a, col_b = st.columns(2)
-            fig_a, title_a, fname_a, png_a = cat_cats[i]
+            title_a, fname_a, png_a = cat_cats[i]
             with col_a:
-                render_plot_card(fig_a, title_a, fname_a, png_a, f"sec8_cc_{i}")
+                render_plot_card(title_a, fname_a, png_a, f"sec8_cc_{i}")
 
             if i + 1 < len(cat_cats):
-                fig_b, title_b, fname_b, png_b = cat_cats[i + 1]
+                title_b, fname_b, png_b = cat_cats[i + 1]
                 with col_b:
-                    render_plot_card(fig_b, title_b, fname_b, png_b, f"sec8_cc_{i+1}")
+                    render_plot_card(title_b, fname_b, png_b, f"sec8_cc_{i+1}")
 
     st.markdown("---")
     bot_col, _ = st.columns([1, 2])

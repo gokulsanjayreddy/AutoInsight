@@ -48,12 +48,12 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 150) -> bytes:
     return buf.getvalue()
 
 
-def create_all_plots_zip(named_figures: list[tuple[str, str, plt.Figure]]) -> bytes:
+def create_all_plots_zip(named_figures: list[tuple[str, str, bytes | plt.Figure]]) -> bytes:
     """Create an in-memory zip archive containing all generated plots."""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         used_names: set[str] = set()
-        for folder, name_base, fig in named_figures:
+        for folder, name_base, content in named_figures:
             clean_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in name_base)
             zip_path = f"{folder}/{clean_name}.png"
             counter = 1
@@ -62,7 +62,11 @@ def create_all_plots_zip(named_figures: list[tuple[str, str, plt.Figure]]) -> by
                 counter += 1
             used_names.add(zip_path)
 
-            png_data = fig_to_png_bytes(fig)
+            if isinstance(content, (bytes, bytearray)):
+                png_data = bytes(content)
+            else:
+                png_data = fig_to_png_bytes(content)
+                plt.close(content)
             zf.writestr(zip_path, png_data)
 
     zip_buffer.seek(0)
