@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import itertools
 import zipfile
+from collections.abc import Sequence
 
 import matplotlib
 
@@ -16,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
+import seaborn as sns  # type: ignore[import-untyped]
 
 sns.set_theme(style="whitegrid", palette="deep")
 plt.rcParams.update({
@@ -46,7 +47,7 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 150) -> bytes:
     return buf.getvalue()
 
 
-def create_all_plots_zip(named_figures: list[tuple[str, str, bytes | plt.Figure]]) -> bytes:
+def create_all_plots_zip(named_figures: Sequence[tuple[str, str, bytes | plt.Figure]]) -> bytes:
     """Create an in-memory zip archive containing all generated plots."""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -60,7 +61,9 @@ def create_all_plots_zip(named_figures: list[tuple[str, str, bytes | plt.Figure]
                 counter += 1
             used_names.add(zip_path)
 
-            if isinstance(content, (bytes, bytearray)):
+            if isinstance(content, bytes):
+                png_data = content
+            elif isinstance(content, bytearray):
                 png_data = bytes(content)
             else:
                 png_data = fig_to_png_bytes(content)
@@ -86,7 +89,7 @@ def get_categorical_columns(
             # Check if column is datetime
             if pd.api.types.is_datetime64_any_dtype(df[col]):
                 continue
-            n_unique = int(df[col].nunique())
+            n_unique = df[col].nunique()
             if 1 < n_unique <= max_cardinality:
                 cat_cols.append(col)
         elif pd.api.types.is_bool_dtype(df[col]):
@@ -99,7 +102,15 @@ def plot_summary_statistics(df: pd.DataFrame) -> plt.Figure:
     num_df = df.select_dtypes(include=[np.number])
     if num_df.empty:
         fig, ax = plt.subplots(figsize=(8, 4))
-        ax.text(0.5, 0.5, "No numeric columns found", ha="center", va="center", fontsize=11, color="#64748b")
+        ax.text(
+            0.5,
+            0.5,
+            "No numeric columns found",
+            ha="center",
+            va="center",
+            fontsize=11,
+            color="#64748b",
+        )
         ax.axis("off")
         return fig
 
@@ -111,10 +122,13 @@ def plot_summary_statistics(df: pd.DataFrame) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(10, fig_height))
     ax.axis("tight")
     ax.axis("off")
+    cell_text = [[str(x) for x in row] for row in desc.round(2).to_numpy()]
+    col_labels = [str(c) for c in desc.columns]
+    row_labels = [str(r) for r in desc.index]
     table = ax.table(
-        cellText=desc.round(2).values,
-        colLabels=desc.columns,
-        rowLabels=desc.index,
+        cellText=cell_text,
+        colLabels=col_labels,
+        rowLabels=row_labels,
         loc="center",
         cellLoc="center",
     )
@@ -131,7 +145,13 @@ def plot_summary_statistics(df: pd.DataFrame) -> plt.Figure:
         cell.set_facecolor("#f8fafc")
         cell.set_text_props(weight="semibold", color="#334155")
 
-    ax.set_title("Numeric Summary Statistics (with Skew & Kurtosis)", pad=15, fontsize=12, fontweight="bold", color="#1e293b")
+    ax.set_title(
+        "Numeric Summary Statistics (with Skew & Kurtosis)",
+        pad=15,
+        fontsize=12,
+        fontweight="bold",
+        color="#1e293b",
+    )
     return fig
 
 
@@ -144,9 +164,15 @@ def plot_missing_values(df: pd.DataFrame) -> plt.Figure | None:
 
     pct = (missing / len(df) * 100).round(2)
     fig, ax = plt.subplots(figsize=(8, max(3.5, 0.35 * len(missing) + 1.0)))
-    bars = ax.barh(missing.index, pct.values, color="#ef4444", alpha=0.85, edgecolor="#b91c1c")
+    bars = ax.barh(missing.index, pct.to_numpy(), color="#ef4444", alpha=0.85, edgecolor="#b91c1c")
     ax.set_xlabel("Missing Values (%)", fontsize=10, fontweight="semibold")
-    ax.set_title("Missing Values by Column (%)", fontsize=11, fontweight="bold", color="#1e293b", pad=12)
+    ax.set_title(
+        "Missing Values by Column (%)",
+        fontsize=11,
+        fontweight="bold",
+        color="#1e293b",
+        pad=12,
+    )
 
     for bar in bars:
         width = bar.get_width()
@@ -196,8 +222,20 @@ def plot_distributions(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[str, 
 
         mean_val = float(data.mean())
         median_val = float(data.median())
-        ax.axvline(mean_val, color="#dc2626", linestyle="--", linewidth=1.5, label=f"Mean: {mean_val:.2f}")
-        ax.axvline(median_val, color="#16a34a", linestyle=":", linewidth=1.5, label=f"Median: {median_val:.2f}")
+        ax.axvline(
+            mean_val,
+            color="#dc2626",
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Mean: {mean_val:.2f}",
+        )
+        ax.axvline(
+            median_val,
+            color="#16a34a",
+            linestyle=":",
+            linewidth=1.5,
+            label=f"Median: {median_val:.2f}",
+        )
 
         ax.set_title(f"Distribution of {col}", fontsize=11, fontweight="bold", color="#1e293b")
         ax.set_xlabel(col, fontsize=10)
@@ -223,12 +261,18 @@ def plot_numeric_boxplots(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[st
             continue
 
         fig, ax = plt.subplots(figsize=(6, 3.8))
+        flier_kws = {
+            "marker": "o",
+            "markerfacecolor": "#ef4444",
+            "markeredgecolor": "none",
+            "alpha": 0.6,
+        }
         sns.boxplot(
             x=data,
             ax=ax,
             color="#93c5fd",
             fliersize=4,
-            flierprops={"marker": "o", "markerfacecolor": "#ef4444", "markeredgecolor": "none", "alpha": 0.6},
+            flierprops=flier_kws,
             boxprops={"edgecolor": "#1d4ed8", "linewidth": 1.2},
             whiskerprops={"color": "#1d4ed8", "linewidth": 1.2},
             capprops={"color": "#1d4ed8", "linewidth": 1.2},
@@ -240,7 +284,12 @@ def plot_numeric_boxplots(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[st
         iqr = q75 - q25
         outliers_count = int(((data < (q25 - 1.5 * iqr)) | (data > (q75 + 1.5 * iqr))).sum())
 
-        ax.set_title(f"Outlier Boxplot: {col} ({outliers_count} outliers)", fontsize=11, fontweight="bold", color="#1e293b")
+        ax.set_title(
+            f"Outlier Boxplot: {col} ({outliers_count} outliers)",
+            fontsize=11,
+            fontweight="bold",
+            color="#1e293b",
+        )
         ax.set_xlabel(col, fontsize=10)
         results.append((col, fig))
 
@@ -278,7 +327,13 @@ def plot_categorical_bars(
         fig, ax = plt.subplots(figsize=(6.5, fig_height))
 
         y_labels = [str(idx) for idx in value_counts.index]
-        bars = ax.barh(y_labels, value_counts.values, color=palette[:len(value_counts)], edgecolor="#334155", linewidth=0.5)
+        bars = ax.barh(
+            y_labels,
+            value_counts.to_numpy(),
+            color=palette[: len(value_counts)],
+            edgecolor="#334155",
+            linewidth=0.5,
+        )
 
         for bar in bars:
             width = bar.get_width()
@@ -296,7 +351,12 @@ def plot_categorical_bars(
             )
 
         title_suffix = f", {missing_count} missing" if missing_count > 0 else ""
-        ax.set_title(f"Frequency: {col} (Top {len(value_counts)}{title_suffix})", fontsize=11, fontweight="bold", color="#1e293b")
+        ax.set_title(
+            f"Frequency: {col} (Top {len(value_counts)}{title_suffix})",
+            fontsize=11,
+            fontweight="bold",
+            color="#1e293b",
+        )
         ax.set_xlabel("Count", fontsize=10)
         ax.set_xlim(0, max(value_counts.values) * 1.25)
         figures.append(fig)
@@ -309,7 +369,14 @@ def plot_correlation_heatmap(df: pd.DataFrame, max_correlated: int = 25) -> plt.
     num_df = df.select_dtypes(include=[np.number])
     if num_df.empty or len(num_df.columns) < 2:
         fig, ax = plt.subplots(figsize=(7, 5))
-        ax.text(0.5, 0.5, "At least 2 numeric columns required for correlation", ha="center", va="center", color="#64748b")
+        ax.text(
+            0.5,
+            0.5,
+            "At least 2 numeric columns required for correlation",
+            ha="center",
+            va="center",
+            color="#64748b",
+        )
         ax.axis("off")
         return fig
 
@@ -338,25 +405,35 @@ def plot_correlation_heatmap(df: pd.DataFrame, max_correlated: int = 25) -> plt.
         cbar_kws={"shrink": 0.8, "label": "Pearson Correlation (r)"},
         ax=ax,
     )
-    ax.set_title("Numeric Feature Correlation Matrix", pad=15, fontsize=12, fontweight="bold", color="#1e293b")
+    ax.set_title(
+        "Numeric Feature Correlation Matrix",
+        pad=15,
+        fontsize=12,
+        fontweight="bold",
+        color="#1e293b",
+    )
     return fig
 
 
 def plot_pairwise_scatter(
     df: pd.DataFrame, max_plots: int = 50, sample_size: int = 1500
 ) -> list[plt.Figure]:
-    """Generate independent scatter plots comparing pairs of numeric columns with regression lines."""
+    """Generate independent scatter plots comparing pairs of numeric columns."""
     num_df = df.select_dtypes(include=[np.number])
     if num_df.empty or len(num_df.columns) < 2:
         return []
 
     num_cols = num_df.columns.tolist()
-    sample_df = df[num_cols].sample(n=sample_size, random_state=42) if len(df) > sample_size else num_df
+    sample_df = (
+        df[num_cols].sample(n=sample_size, random_state=42)
+        if len(df) > sample_size
+        else num_df
+    )
 
     corr_matrix = sample_df.corr().abs()
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
     stacked = upper.unstack()
-    sorted_pairs = stacked.dropna().sort_values(ascending=False)
+    sorted_pairs = stacked.dropna().sort_values(ascending=False)  # type: ignore[call-overload]
     selected_pairs = sorted_pairs.head(max_plots)
 
     figures: list[plt.Figure] = []
@@ -396,7 +473,7 @@ _pair_score_cache: dict[str, float] = {}
 
 
 def compute_eta_squared(df: pd.DataFrame, cat_col: str, num_col: str) -> float:
-    """Compute eta-squared (between-group variance / total variance). Cached by column names and dataframe shape."""
+    """Compute eta-squared (between-group variance / total variance). Cached by shape."""
     cache_key = f"eta2_{cat_col}_{num_col}_{len(df)}_{df.shape[1]}"
     if cache_key in _pair_score_cache:
         return _pair_score_cache[cache_key]
@@ -448,14 +525,16 @@ def compute_cramers_v(df: pd.DataFrame, col1: str, col2: str) -> float:
     row_sums = observed.sum(axis=1, keepdims=True)
     col_sums = observed.sum(axis=0, keepdims=True)
     expected = (row_sums @ col_sums) / n
+    terms = ((observed - expected) ** 2) / np.where(expected > 0, expected, 1.0)
     with np.errstate(divide="ignore", invalid="ignore"):
-        chi2 = float(np.sum(np.nan_to_num(((observed - expected) ** 2) / np.where(expected > 0, expected, 1.0))))
+        chi2 = float(np.sum(np.nan_to_num(terms)))
 
     denom = n * (min(r, k) - 1)
-    if denom <= 0 or chi2 <= 0:
-        score = 0.0
-    else:
-        score = float(np.clip(np.sqrt(chi2 / denom), 0.0, 1.0))
+    score = (
+        0.0
+        if denom <= 0 or chi2 <= 0
+        else float(np.clip(np.sqrt(chi2 / denom), 0.0, 1.0))
+    )
 
     _pair_score_cache[cache_key] = score
     return score
@@ -467,7 +546,7 @@ def plot_cat_num_relationships(
     sample_size: int = 2500,
     id_cols: list[str] | None = None,
 ) -> list[tuple[str, plt.Figure]]:
-    """Generate independent figures comparing numeric metrics across categorical groupings ranked by eta-squared."""
+    """Generate independent figures comparing numeric metrics across categoricals."""
     excluded = set(id_cols or [])
     cat_cols = get_categorical_columns(df, max_cardinality=15, id_cols=id_cols)
     num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in excluded]
@@ -510,7 +589,12 @@ def plot_cat_num_relationships(
             medianprops={"color": "#dc2626", "linewidth": 1.5},
         )
 
-        ax.set_title(f"{num_col} by {cat_col} (η² = {score:.2f})", fontsize=11, fontweight="bold", color="#1e293b")
+        ax.set_title(
+            f"{num_col} by {cat_col} (η² = {score:.2f})",
+            fontsize=11,
+            fontweight="bold",
+            color="#1e293b",
+        )
         ax.set_xlabel(cat_col, fontsize=10)
         ax.set_ylabel(num_col, fontsize=10)
         plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
@@ -526,7 +610,7 @@ def plot_cat_cat_relationships(
     max_pairs: int = 30,
     id_cols: list[str] | None = None,
 ) -> list[tuple[str, plt.Figure]]:
-    """Generate independent figures showing interactions between pairs of categorical columns ranked by Cramer's V."""
+    """Generate independent figures showing interactions between categorical columns."""
     cat_cols = get_categorical_columns(df, max_cardinality=10, id_cols=id_cols)
 
     if len(cat_cols) < 2:
@@ -562,7 +646,12 @@ def plot_cat_cat_relationships(
             linewidth=0.5,
         )
 
-        ax.set_title(f"{col1} vs {col2} (Cramér's V = {score:.2f})", fontsize=11, fontweight="bold", color="#1e293b")
+        ax.set_title(
+            f"{col1} vs {col2} (Cramér's V = {score:.2f})",
+            fontsize=11,
+            fontweight="bold",
+            color="#1e293b",
+        )
         ax.set_xlabel(col1, fontsize=10)
         ax.set_ylabel("Percentage (%)", fontsize=10)
         ax.legend(title=col2, bbox_to_anchor=(1.02, 1), loc="upper left", frameon=True, fontsize=8)

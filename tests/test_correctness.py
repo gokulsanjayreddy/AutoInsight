@@ -101,7 +101,7 @@ def test_1_5_pair_ranking_cat_num_and_cat_cat():
 
 
 def test_1_6_load_csv_delimiters_encodings_and_validation():
-    """Bug 1.6: load_csv should handle semicolons, tabs, latin-1, utf-8-sig, empty files, size caps."""
+    """Bug 1.6: load_csv handles semicolons, tabs, latin-1, utf-8-sig, empty files, size caps."""
     # Semicolon delimited
     csv_semi = b"col1;col2;col3\n1;2;3\n4;5;6\n"
     df_semi = load_csv(io.BytesIO(csv_semi))

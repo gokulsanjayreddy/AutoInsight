@@ -15,7 +15,7 @@ def test_3_1_no_use_container_width_in_app():
 
 
 def test_3_2_requirements_packages():
-    """Bug 3.2: requirements.txt must not contain scikit-learn or plotly, and pins must have compatible ranges."""
+    """Bug 3.2: requirements.txt must not contain scikit-learn or plotly; check ranges."""
     with open("requirements.txt", encoding="utf-8") as f:
         reqs = f.read()
     assert "scikit-learn" not in reqs
