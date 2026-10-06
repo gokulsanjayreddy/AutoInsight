@@ -123,7 +123,7 @@ def plot_summary_statistics(df: pd.DataFrame) -> plt.Figure:
     ax.axis("tight")
     ax.axis("off")
     cell_text = [[str(x) for x in row] for row in desc.round(2).to_numpy()]
-    col_labels = [str(c) for c in desc.columns]
+    col_labels = list(desc.columns)
     row_labels = [str(r) for r in desc.index]
     table = ax.table(
         cellText=cell_text,
@@ -241,7 +241,7 @@ def plot_distributions(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[str, 
         ax.set_xlabel(col, fontsize=10)
         ax.set_ylabel("Count / Density", fontsize=10)
         ax.legend(frameon=True, facecolor="white", edgecolor="#cbd5e1", fontsize=8)
-        results.append((str(col), fig))
+        results.append((col, fig))
 
     return results
 
@@ -282,7 +282,7 @@ def plot_numeric_boxplots(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[st
         q25 = float(data.quantile(0.25))
         q75 = float(data.quantile(0.75))
         iqr = q75 - q25
-        outliers_count = int(((data < (q25 - 1.5 * iqr)) | (data > (q75 + 1.5 * iqr))).sum())
+        outliers_count = ((data < (q25 - 1.5 * iqr)) | (data > (q75 + 1.5 * iqr))).sum()
 
         ax.set_title(
             f"Outlier Boxplot: {col} ({outliers_count} outliers)",
@@ -322,7 +322,7 @@ def plot_categorical_bars(
         if value_counts.empty:
             continue
 
-        missing_count = int(df[col].isna().sum())
+        missing_count = df[col].isna().sum()
         fig_height = max(3.5, 0.35 * len(value_counts) + 1.0)
         fig, ax = plt.subplots(figsize=(6.5, fig_height))
 
