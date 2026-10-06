@@ -115,14 +115,14 @@ def render_plot_card(
     """Render a standalone plot inside a bordered container with a PNG download button."""
     with st.container(border=True):
         st.markdown(f"**{title}**")
-        st.image(png_bytes, use_container_width=True)
+        st.image(png_bytes, width="stretch")
         st.download_button(
             label="Download Plot (PNG)",
             data=png_bytes,
             file_name=f"{download_filename}.png",
             mime="image/png",
             key=key,
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -183,7 +183,7 @@ def main():
 
     with sample_col:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        if st.button("Load Demo Dataset", use_container_width=True):
+        if st.button("Load Demo Dataset", width="stretch"):
             st.session_state.df = get_sample_dataset()
             st.session_state.source_name = "sample_employee_analytics.csv"
             st.session_state.uploaded_file_id = "demo"
@@ -192,7 +192,7 @@ def main():
             st.session_state.cached_hash = None
             st.rerun()
 
-        if st.session_state.df is not None and st.button("Reset Dataset", use_container_width=True):
+        if st.session_state.df is not None and st.button("Reset Dataset", width="stretch"):
             st.session_state.df = None
             st.session_state.source_name = None
             st.session_state.analysis_cache = None
@@ -266,7 +266,7 @@ def main():
             data=zip_bytes,
             file_name=f"autoinsight_eda_{clean_dl_name}.zip",
             mime="application/zip",
-            use_container_width=True,
+            width="stretch",
             type="primary",
             key="btn_dl_all_top",
         )
@@ -407,7 +407,7 @@ def main():
             data=zip_bytes,
             file_name=f"autoinsight_eda_{clean_dl_name}.zip",
             mime="application/zip",
-            use_container_width=True,
+            width="stretch",
             type="primary",
             key="btn_dl_all_bottom",
         )
