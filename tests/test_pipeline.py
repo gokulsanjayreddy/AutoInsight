@@ -33,8 +33,8 @@ class TestFullPipeline(unittest.TestCase):
             all_named_figures.append(("00_summary", "missing_values", fig_miss))
 
         dists = plot_distributions(df)
-        for i, fig in enumerate(dists):
-            all_named_figures.append(("01_distributions", f"dist_{i}", fig))
+        for col_name, fig in dists:
+            all_named_figures.append(("01_distributions", f"dist_{col_name}", fig))
 
         boxes = plot_numeric_boxplots(df)
         for col, fig in boxes:

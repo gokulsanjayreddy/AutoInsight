@@ -69,11 +69,21 @@ def create_all_plots_zip(named_figures: list[tuple[str, str, plt.Figure]]) -> by
     return zip_buffer.getvalue()
 
 
-def get_categorical_columns(df: pd.DataFrame, max_cardinality: int = 25) -> list[str]:
+def get_categorical_columns(
+    df: pd.DataFrame,
+    max_cardinality: int = 25,
+    id_cols: list[str] | None = None,
+) -> list[str]:
     """Return categorical and low-cardinality discrete columns suitable for grouping."""
+    excluded = set(id_cols or [])
     cat_cols = []
     for col in df.columns:
+        if col in excluded:
+            continue
         if not pd.api.types.is_numeric_dtype(df[col]):
+            # Check if column is datetime
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                continue
             n_unique = int(df[col].nunique())
             if 1 < n_unique <= max_cardinality:
                 cat_cols.append(col)
@@ -154,14 +164,17 @@ def plot_missing_values(df: pd.DataFrame) -> plt.Figure | None:
     return fig
 
 
-def plot_distributions(df: pd.DataFrame, max_cols: int = 50) -> list[plt.Figure]:
-    """Generate independent histogram + KDE figures for each numeric column."""
+def plot_distributions(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[str, plt.Figure]]:
+    """Generate independent histogram + KDE figures for each numeric column.
+
+    Returns a list of (col_name, Figure) tuples. All-NaN columns are skipped.
+    """
     num_df = df.select_dtypes(include=[np.number])
     if num_df.empty:
         return []
 
     columns = num_df.columns.tolist()[:max_cols]
-    figures: list[plt.Figure] = []
+    results: list[tuple[str, plt.Figure]] = []
 
     for col in columns:
         data = num_df[col].dropna()
@@ -188,9 +201,9 @@ def plot_distributions(df: pd.DataFrame, max_cols: int = 50) -> list[plt.Figure]
         ax.set_xlabel(col, fontsize=10)
         ax.set_ylabel("Count / Density", fontsize=10)
         ax.legend(frameon=True, facecolor="white", edgecolor="#cbd5e1", fontsize=8)
-        figures.append(fig)
+        results.append((str(col), fig))
 
-    return figures
+    return results
 
 
 def plot_numeric_boxplots(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[str, plt.Figure]]:
@@ -232,9 +245,16 @@ def plot_numeric_boxplots(df: pd.DataFrame, max_cols: int = 50) -> list[tuple[st
     return results
 
 
-def plot_categorical_bars(df: pd.DataFrame, max_categories: int = 15) -> list[plt.Figure]:
-    """Generate independent bar charts for each categorical column."""
-    cat_cols = get_categorical_columns(df, max_cardinality=max_categories * 2)
+def plot_categorical_bars(
+    df: pd.DataFrame,
+    max_categories: int = 15,
+    id_cols: list[str] | None = None,
+) -> list[plt.Figure]:
+    """Generate independent bar charts for each categorical column.
+
+    Percentages are computed against non-null count and exclude NaN from bars.
+    """
+    cat_cols = get_categorical_columns(df, max_cardinality=max_categories * 2, id_cols=id_cols)
     if not cat_cols:
         return []
 
@@ -242,9 +262,16 @@ def plot_categorical_bars(df: pd.DataFrame, max_categories: int = 15) -> list[pl
     palette = sns.color_palette("mako", n_colors=max_categories)
 
     for col in cat_cols:
-        value_counts = df[col].astype(str).value_counts(dropna=False).head(max_categories)
-        total_non_null = len(df[col].dropna())
+        clean = df[col].dropna()
+        total_non_null = len(clean)
+        if total_non_null == 0:
+            continue
 
+        value_counts = clean.astype(str).value_counts().head(max_categories)
+        if value_counts.empty:
+            continue
+
+        missing_count = int(df[col].isna().sum())
         fig_height = max(3.5, 0.35 * len(value_counts) + 1.0)
         fig, ax = plt.subplots(figsize=(6.5, fig_height))
 
@@ -253,7 +280,7 @@ def plot_categorical_bars(df: pd.DataFrame, max_categories: int = 15) -> list[pl
 
         for bar in bars:
             width = bar.get_width()
-            pct = (width / total_non_null * 100) if total_non_null > 0 else 0
+            pct = (width / total_non_null * 100) if total_non_null > 0 else 0.0
             ax.annotate(
                 f" {width:,} ({pct:.1f}%)",
                 xy=(width, bar.get_y() + bar.get_height() / 2),
@@ -266,7 +293,8 @@ def plot_categorical_bars(df: pd.DataFrame, max_categories: int = 15) -> list[pl
                 fontweight="semibold",
             )
 
-        ax.set_title(f"Frequency: {col} (Top {len(value_counts)})", fontsize=11, fontweight="bold", color="#1e293b")
+        title_suffix = f", {missing_count} missing" if missing_count > 0 else ""
+        ax.set_title(f"Frequency: {col} (Top {len(value_counts)}{title_suffix})", fontsize=11, fontweight="bold", color="#1e293b")
         ax.set_xlabel("Count", fontsize=10)
         ax.set_xlim(0, max(value_counts.values) * 1.25)
         figures.append(fig)
@@ -362,78 +390,163 @@ def plot_pairwise_scatter(
     return figures
 
 
+_pair_score_cache: dict[str, float] = {}
+
+
+def compute_eta_squared(df: pd.DataFrame, cat_col: str, num_col: str) -> float:
+    """Compute eta-squared (between-group variance / total variance). Cached by column names and dataframe shape."""
+    cache_key = f"eta2_{cat_col}_{num_col}_{len(df)}_{df.shape[1]}"
+    if cache_key in _pair_score_cache:
+        return _pair_score_cache[cache_key]
+
+    sub = df[[cat_col, num_col]].dropna()
+    if len(sub) < 5 or sub[cat_col].nunique() < 2:
+        _pair_score_cache[cache_key] = -1.0
+        return -1.0
+
+    y = sub[num_col].to_numpy(dtype=float)
+    y_mean = float(np.mean(y))
+    total_ss = float(np.sum((y - y_mean) ** 2))
+    if total_ss <= 0:
+        _pair_score_cache[cache_key] = 0.0
+        return 0.0
+
+    grouped = sub.groupby(cat_col)[num_col]
+    group_means = grouped.mean().to_numpy(dtype=float)
+    group_counts = grouped.count().to_numpy(dtype=float)
+    between_ss = float(np.sum(group_counts * ((group_means - y_mean) ** 2)))
+    score = float(np.clip(between_ss / total_ss, 0.0, 1.0))
+    _pair_score_cache[cache_key] = score
+    return score
+
+
+def compute_cramers_v(df: pd.DataFrame, col1: str, col2: str) -> float:
+    """Compute Cramer's V association score for two categorical variables."""
+    cache_key = f"cramers_{col1}_{col2}_{len(df)}_{df.shape[1]}"
+    if cache_key in _pair_score_cache:
+        return _pair_score_cache[cache_key]
+
+    sub = df[[col1, col2]].dropna()
+    if len(sub) < 5 or sub[col1].nunique() < 2 or sub[col2].nunique() < 2:
+        _pair_score_cache[cache_key] = -1.0
+        return -1.0
+
+    ct = pd.crosstab(sub[col1], sub[col2])
+    r, k = ct.shape
+    if min(r, k) < 2:
+        _pair_score_cache[cache_key] = -1.0
+        return -1.0
+
+    observed = ct.to_numpy(dtype=float)
+    n = float(observed.sum())
+    if n <= 0:
+        _pair_score_cache[cache_key] = 0.0
+        return 0.0
+
+    row_sums = observed.sum(axis=1, keepdims=True)
+    col_sums = observed.sum(axis=0, keepdims=True)
+    expected = (row_sums @ col_sums) / n
+    with np.errstate(divide="ignore", invalid="ignore"):
+        chi2 = float(np.sum(np.nan_to_num(((observed - expected) ** 2) / np.where(expected > 0, expected, 1.0))))
+
+    denom = n * (min(r, k) - 1)
+    if denom <= 0 or chi2 <= 0:
+        score = 0.0
+    else:
+        score = float(np.clip(np.sqrt(chi2 / denom), 0.0, 1.0))
+
+    _pair_score_cache[cache_key] = score
+    return score
+
+
 def plot_cat_num_relationships(
-    df: pd.DataFrame, max_pairs: int = 60, sample_size: int = 2500
+    df: pd.DataFrame,
+    max_pairs: int = 60,
+    sample_size: int = 2500,
+    id_cols: list[str] | None = None,
 ) -> list[tuple[str, plt.Figure]]:
-    """Generate independent figures comparing numeric metrics across categorical groupings."""
-    cat_cols = get_categorical_columns(df, max_cardinality=15)
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    """Generate independent figures comparing numeric metrics across categorical groupings ranked by eta-squared."""
+    excluded = set(id_cols or [])
+    cat_cols = get_categorical_columns(df, max_cardinality=15, id_cols=id_cols)
+    num_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in excluded]
 
     if not cat_cols or not num_cols:
         return []
 
     plot_data = df.sample(n=sample_size, random_state=42) if len(df) > sample_size else df
 
-    results: list[tuple[str, plt.Figure]] = []
-    pair_count = 0
-
+    # Rank candidate pairs by eta-squared
+    scored_candidates = []
     for cat_col in cat_cols:
         for num_col in num_cols:
-            if pair_count >= max_pairs:
-                break
+            score = compute_eta_squared(plot_data, cat_col, num_col)
+            if score >= 0:
+                scored_candidates.append((score, cat_col, num_col))
 
-            sub = plot_data[[cat_col, num_col]].dropna()
-            if len(sub) < 5:
-                continue
+    scored_candidates.sort(key=lambda x: x[0], reverse=True)
+    top_candidates = scored_candidates[:max_pairs]
 
-            fig, ax = plt.subplots(figsize=(6.5, 4.2))
-            top_cats = sub[cat_col].value_counts().head(8).index
-            filtered = sub[sub[cat_col].isin(top_cats)]
+    results: list[tuple[str, plt.Figure]] = []
+    for score, cat_col, num_col in top_candidates:
+        sub = plot_data[[cat_col, num_col]].dropna()
+        if len(sub) < 5 or sub[cat_col].nunique() < 2:
+            continue
 
-            sns.boxplot(
-                data=filtered,
-                x=cat_col,
-                y=num_col,
-                hue=cat_col,
-                legend=False,
-                ax=ax,
-                palette="Blues",
-                boxprops={"edgecolor": "#1e3a8a", "linewidth": 1},
-                medianprops={"color": "#dc2626", "linewidth": 1.5},
-            )
+        fig, ax = plt.subplots(figsize=(6.5, 4.2))
+        top_cats = sub[cat_col].value_counts().head(8).index
+        filtered = sub[sub[cat_col].isin(top_cats)]
 
-            ax.set_title(f"{num_col} by {cat_col}", fontsize=11, fontweight="bold", color="#1e293b")
-            ax.set_xlabel(cat_col, fontsize=10)
-            ax.set_ylabel(num_col, fontsize=10)
-            plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+        sns.boxplot(
+            data=filtered,
+            x=cat_col,
+            y=num_col,
+            hue=cat_col,
+            legend=False,
+            ax=ax,
+            palette="Blues",
+            boxprops={"edgecolor": "#1e3a8a", "linewidth": 1},
+            medianprops={"color": "#dc2626", "linewidth": 1.5},
+        )
 
-            label = f"{num_col}_by_{cat_col}"
-            results.append((label, fig))
-            pair_count += 1
+        ax.set_title(f"{num_col} by {cat_col} (η² = {score:.2f})", fontsize=11, fontweight="bold", color="#1e293b")
+        ax.set_xlabel(cat_col, fontsize=10)
+        ax.set_ylabel(num_col, fontsize=10)
+        plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
 
-        if pair_count >= max_pairs:
-            break
+        label = f"{num_col}_by_{cat_col}"
+        results.append((label, fig))
 
     return results
 
 
 def plot_cat_cat_relationships(
-    df: pd.DataFrame, max_pairs: int = 30
+    df: pd.DataFrame,
+    max_pairs: int = 30,
+    id_cols: list[str] | None = None,
 ) -> list[tuple[str, plt.Figure]]:
-    """Generate independent figures showing interactions between pairs of categorical columns."""
-    cat_cols = get_categorical_columns(df, max_cardinality=10)
+    """Generate independent figures showing interactions between pairs of categorical columns ranked by Cramer's V."""
+    cat_cols = get_categorical_columns(df, max_cardinality=10, id_cols=id_cols)
 
     if len(cat_cols) < 2:
         return []
 
-    results: list[tuple[str, plt.Figure]] = []
-    pairs_plotted = 0
-
+    # Rank candidate pairs by Cramer's V
+    scored_candidates = []
     for col1, col2 in itertools.combinations(cat_cols, 2):
-        if pairs_plotted >= max_pairs:
-            break
+        score = compute_cramers_v(df, col1, col2)
+        if score >= 0:
+            scored_candidates.append((score, col1, col2))
 
-        ct = pd.crosstab(df[col1].astype(str), df[col2].astype(str), normalize="index") * 100
+    scored_candidates.sort(key=lambda x: x[0], reverse=True)
+    top_candidates = scored_candidates[:max_pairs]
+
+    results: list[tuple[str, plt.Figure]] = []
+    for score, col1, col2 in top_candidates:
+        sub = df[[col1, col2]].dropna()
+        if len(sub) < 5 or sub[col1].nunique() < 2 or sub[col2].nunique() < 2:
+            continue
+
+        ct = pd.crosstab(sub[col1].astype(str), sub[col2].astype(str), normalize="index") * 100
         if ct.empty:
             continue
 
@@ -447,7 +560,7 @@ def plot_cat_cat_relationships(
             linewidth=0.5,
         )
 
-        ax.set_title(f"{col1} vs {col2} (% Breakdown)", fontsize=11, fontweight="bold", color="#1e293b")
+        ax.set_title(f"{col1} vs {col2} (Cramér's V = {score:.2f})", fontsize=11, fontweight="bold", color="#1e293b")
         ax.set_xlabel(col1, fontsize=10)
         ax.set_ylabel("Percentage (%)", fontsize=10)
         ax.legend(title=col2, bbox_to_anchor=(1.02, 1), loc="upper left", frameon=True, fontsize=8)
@@ -455,7 +568,6 @@ def plot_cat_cat_relationships(
 
         label = f"{col1}_vs_{col2}"
         results.append((label, fig))
-        pairs_plotted += 1
 
     return results
 

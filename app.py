@@ -7,7 +7,6 @@ Displays categorized, strictly separated standalone figures with 1-click batch Z
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -76,19 +75,20 @@ st.markdown(
     .category-title {
         font-size: 1.3rem;
         font-weight: 700;
-        color: #0f172a;
+        color: var(--text-color, #0f172a);
         margin-top: 2.25rem;
         margin-bottom: 0.2rem;
     }
     .category-subtitle {
         font-size: 0.9rem;
-        color: #64748b;
+        color: var(--text-color, #64748b);
+        opacity: 0.85;
         margin-bottom: 1.2rem;
     }
 
     div[data-testid="stMetric"] {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--secondary-background-color, #ffffff);
+        border: 1px solid var(--border-color, #e2e8f0);
         padding: 0.9rem 1.15rem;
         border-radius: 8px;
     }
@@ -129,7 +129,8 @@ def render_plot_card(
 
 def generate_full_analysis(df: pd.DataFrame):
     """Generate all figures and prepare in-memory ZIP package for download."""
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    profiling = profile_dataset(df)
+    id_cols = profiling.get("id_columns", [])
 
     all_named_figures: list[tuple[str, str, plt.Figure]] = []
     card_data: dict[str, list] = {}
@@ -147,9 +148,9 @@ def generate_full_analysis(df: pd.DataFrame):
     else:
         card_data["missing"] = []
 
-    dist_figs = plot_distributions(df)
+    dist_pairs = plot_distributions(df)
     card_data["dists"] = []
-    for col_name, fig in zip(num_cols[:len(dist_figs)], dist_figs):
+    for col_name, fig in dist_pairs:
         png = fig_to_png_bytes(fig)
         all_named_figures.append(("01_univariate_numeric_distributions", f"dist_{col_name}", fig))
         card_data["dists"].append((fig, f"Distribution: {col_name}", f"distribution_{col_name}", png))
@@ -161,7 +162,7 @@ def generate_full_analysis(df: pd.DataFrame):
         all_named_figures.append(("02_outlier_boxplots", f"boxplot_{col_name}", fig))
         card_data["boxplots"].append((fig, f"Boxplot: {col_name}", f"boxplot_{col_name}", png))
 
-    cat_figs = plot_categorical_bars(df)
+    cat_figs = plot_categorical_bars(df, id_cols=id_cols)
     card_data["cats"] = []
     for idx, fig in enumerate(cat_figs):
         png = fig_to_png_bytes(fig)
@@ -180,14 +181,14 @@ def generate_full_analysis(df: pd.DataFrame):
         all_named_figures.append(("05_numeric_relationships", f"scatter_pair_{idx+1}", fig))
         card_data["scatters"].append((fig, f"Scatter Plot {idx+1}", f"scatter_pair_{idx+1}", png))
 
-    cat_num_pairs = plot_cat_num_relationships(df)
+    cat_num_pairs = plot_cat_num_relationships(df, id_cols=id_cols)
     card_data["cat_num"] = []
     for label, fig in cat_num_pairs:
         png = fig_to_png_bytes(fig)
         all_named_figures.append(("06_cat_vs_numeric", f"cat_num_{label}", fig))
         card_data["cat_num"].append((fig, f"Grouped Comparison: {label}", f"cat_num_{label}", png))
 
-    cat_cat_pairs = plot_cat_cat_relationships(df)
+    cat_cat_pairs = plot_cat_cat_relationships(df, id_cols=id_cols)
     card_data["cat_cat"] = []
     for label, fig in cat_cat_pairs:
         png = fig_to_png_bytes(fig)
@@ -206,6 +207,9 @@ def generate_full_analysis(df: pd.DataFrame):
 
 def main():
     """Main application layout and execution."""
+    import html
+    import re
+
     st.markdown(
         """
         <div class="hero-container">
@@ -224,27 +228,47 @@ def main():
         st.session_state.analysis_cache = None
     if "cached_hash" not in st.session_state:
         st.session_state.cached_hash = None
+    if "uploaded_file_id" not in st.session_state:
+        st.session_state.uploaded_file_id = None
+    if "uploader_key" not in st.session_state:
+        st.session_state.uploader_key = 0
 
     upload_col, sample_col = st.columns([3, 1], gap="medium")
 
     with upload_col:
+        uploader_widget_key = f"file_uploader_{st.session_state.uploader_key}"
         uploaded_file = st.file_uploader(
             "Upload a CSV dataset:",
             type=["csv"],
-            key="file_uploader_main",
+            key=uploader_widget_key,
         )
         if uploaded_file is not None:
-            try:
-                st.session_state.df = load_csv(uploaded_file)
-                st.session_state.source_name = uploaded_file.name
-            except ValueError as e:
-                st.error(f"Error loading CSV file: {e}")
+            file_bytes = uploaded_file.getvalue()
+            current_file_id = f"{uploaded_file.name}_{uploaded_file.size}_{hash(file_bytes[:4096])}"
+            if st.session_state.uploaded_file_id != current_file_id:
+                try:
+                    st.session_state.df = load_csv(uploaded_file)
+                    st.session_state.source_name = uploaded_file.name
+                    st.session_state.uploaded_file_id = current_file_id
+                    st.session_state.analysis_cache = None
+                    st.session_state.cached_hash = None
+                except ValueError as e:
+                    st.session_state.df = None
+                    st.session_state.source_name = None
+                    st.session_state.uploaded_file_id = None
+                    st.session_state.analysis_cache = None
+                    st.session_state.cached_hash = None
+                    st.error(f"Error loading CSV file: {e}")
 
     with sample_col:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
         if st.button("Load Demo Dataset", use_container_width=True):
             st.session_state.df = get_sample_dataset()
             st.session_state.source_name = "sample_employee_analytics.csv"
+            st.session_state.uploaded_file_id = "demo"
+            st.session_state.uploader_key += 1
+            st.session_state.analysis_cache = None
+            st.session_state.cached_hash = None
             st.rerun()
 
         if st.session_state.df is not None and st.button("Reset Dataset", use_container_width=True):
@@ -252,6 +276,8 @@ def main():
             st.session_state.source_name = None
             st.session_state.analysis_cache = None
             st.session_state.cached_hash = None
+            st.session_state.uploaded_file_id = None
+            st.session_state.uploader_key += 1
             st.rerun()
 
     if st.session_state.df is None:
@@ -260,18 +286,23 @@ def main():
 
     df: pd.DataFrame = st.session_state.df
     source_name = st.session_state.source_name or "dataset"
+    escaped_source_name = html.escape(source_name)
+    clean_dl_name = re.sub(r"(?i)\.csv$", "", source_name)
+    clean_dl_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", clean_dl_name)
 
     profiling = profile_dataset(df)
     total_rows = profiling.get("rows", len(df))
     total_cols = profiling.get("columns", len(df.columns))
     memory_mb = profiling.get("memory_mb", 0.0)
     dup_rows = profiling.get("duplicate_rows", 0)
+    id_cols = profiling.get("id_columns", [])
+    col_types = profiling.get("column_types", {})
 
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    cat_cols = [c for c in df.columns if c not in num_cols]
+    num_cols = [c for c, t in col_types.items() if t == "numeric"]
+    cat_cols = [c for c, t in col_types.items() if t in ("categorical", "boolean") and c not in id_cols]
 
     st.markdown("<div class='category-title'>Overview and Data Health</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='category-subtitle'>Dataset: <strong>{source_name}</strong></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='category-subtitle'>Dataset: <strong>{escaped_source_name}</strong></div>", unsafe_allow_html=True)
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1:
@@ -287,7 +318,7 @@ def main():
     with m6:
         st.metric("Duplicate Rows", dup_rows)
 
-    current_hash = f"{len(df)}_{list(df.columns)}_{source_name}"
+    current_hash = f"{pd.util.hash_pandas_object(df, index=True).sum()}_{list(df.columns)}_{[str(t) for t in df.dtypes]}_{source_name}"
     if st.session_state.analysis_cache is None or st.session_state.cached_hash != current_hash:
         with st.spinner("Analyzing dataset and generating charts..."):
             st.session_state.analysis_cache = generate_full_analysis(df)
@@ -304,7 +335,7 @@ def main():
         st.download_button(
             label=f"Download All Plots ({total_plots} Files, ZIP)",
             data=zip_bytes,
-            file_name=f"autoinsight_eda_{source_name.replace('.csv', '')}.zip",
+            file_name=f"autoinsight_eda_{clean_dl_name}.zip",
             mime="application/zip",
             use_container_width=True,
             type="primary",
@@ -312,7 +343,7 @@ def main():
         )
     with col_info:
         st.markdown(
-            f"<div style='padding-top: 0.5rem; color: #475569;'>Generated <strong>{total_plots}</strong> separated standalone charts across all column combinations.</div>",
+            f"<div style='padding-top: 0.5rem; color: var(--text-color, #475569);'>Generated <strong>{total_plots}</strong> separated standalone charts across all column combinations.</div>",
             unsafe_allow_html=True,
         )
 
@@ -445,7 +476,7 @@ def main():
         st.download_button(
             label=f"Download All Plots ({total_plots} Files, ZIP)",
             data=zip_bytes,
-            file_name=f"autoinsight_eda_{source_name.replace('.csv', '')}.zip",
+            file_name=f"autoinsight_eda_{clean_dl_name}.zip",
             mime="application/zip",
             use_container_width=True,
             type="primary",

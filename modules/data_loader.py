@@ -10,12 +10,79 @@ import numpy as np
 import pandas as pd
 
 
-def load_csv(uploaded_file) -> pd.DataFrame:
-    """Load an uploaded CSV file into a pandas DataFrame."""
+def load_csv(
+    uploaded_file,
+    max_size_mb: float = 200.0,
+    max_rows: int | None = None,
+) -> pd.DataFrame:
+    """Load an uploaded CSV file into a pandas DataFrame with encoding and delimiter sniffing."""
+    import csv
+    import io
+
+    # Check file size if available
+    if hasattr(uploaded_file, "size") and uploaded_file.size is not None and uploaded_file.size > max_size_mb * 1024 * 1024:
+        raise ValueError(f"File size exceeds the {max_size_mb} MB limit.")
+
+    # Read bytes from file-like object or path
+    if hasattr(uploaded_file, "read"):
+        raw_bytes = uploaded_file.read()
+        if hasattr(uploaded_file, "seek"):
+            uploaded_file.seek(0)
+    elif isinstance(uploaded_file, (bytes, bytearray)):
+        raw_bytes = bytes(uploaded_file)
+    else:
+        with open(str(uploaded_file), "rb") as f:
+            raw_bytes = f.read()
+
+    if len(raw_bytes) > max_size_mb * 1024 * 1024:
+        raise ValueError(f"File size exceeds the {max_size_mb} MB limit.")
+
+    if not raw_bytes or len(raw_bytes.strip()) == 0:
+        raise ValueError("Dataset is empty: file contains no data.")
+
+    # Try utf-8-sig first, then fallback to latin-1
     try:
-        return pd.read_csv(uploaded_file)
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            text = raw_bytes.decode("latin-1")
+        except Exception as e:
+            raise ValueError(f"Failed to decode CSV file: {e}") from e
+
+    # Sniff delimiter on first 64KB
+    sample = text[:65536]
+    delimiter = ","
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
+        delimiter = dialect.delimiter
+    except Exception:  # noqa: BLE001
+        delimiter = ","
+
+    try:
+        df = pd.read_csv(
+            io.StringIO(text),
+            sep=delimiter,
+            nrows=max_rows,
+        )
     except Exception as e:
         raise ValueError(f"Failed to load CSV: {e}") from e
+
+    if df.empty or len(df.columns) == 0 or len(df) == 0:
+        raise ValueError("Dataset is empty: file contains no data rows or columns.")
+
+    # Parse obvious datetime columns (accepted only if at least 90% parse)
+    for col in df.columns:
+        if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
+            clean = df[col].dropna()
+            if len(clean) >= 5:
+                # Check if values contain date separators
+                sample_str = clean.head(20).astype(str)
+                if sample_str.str.contains(r"[\-/:]").any():
+                    parsed = pd.to_datetime(clean, errors="coerce")
+                    if parsed.notna().sum() / len(clean) >= 0.90:
+                        df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    return df
 
 
 def infer_column_type(series: pd.Series) -> str:
@@ -24,27 +91,52 @@ def infer_column_type(series: pd.Series) -> str:
     if clean_series.empty:
         return "high_cardinality_text"
 
-    if pd.api.types.is_bool_dtype(series) or set(clean_series.unique()).issubset({0, 1}):
+    col_name = str(series.name).lower() if series.name is not None else ""
+
+    # Explicit boolean dtype
+    if pd.api.types.is_bool_dtype(series):
         return "boolean"
 
+    # Datetime dtype
     if pd.api.types.is_datetime64_any_dtype(series):
         return "datetime"
 
+    # String / object checks
     if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
-        sample = clean_series.head(5).astype(str)
+        str_vals = set(clean_series.astype(str).str.strip().str.lower().unique())
+        if str_vals.issubset({"true", "false", "t", "f", "yes", "no", "y", "n"}):
+            return "boolean"
+
+        sample = clean_series.head(10).astype(str)
         if sample.str.contains(r"[\-/:]").all():
             try:
-                pd.to_datetime(sample, errors="raise")
-                return "datetime"
+                parsed = pd.to_datetime(sample, errors="raise")
+                if len(parsed) == len(sample):
+                    return "datetime"
             except (ValueError, TypeError):
                 pass
 
+        # Small sample or low-cardinality strings are categorical, not high-cardinality text
+        n_unique = clean_series.nunique()
+        n_total = len(clean_series)
+        if n_unique <= 10 or (n_unique / n_total <= 0.5):
+            return "categorical"
+        return "high_cardinality_text"
+
+    # Numeric types
     if pd.api.types.is_numeric_dtype(series):
+        uniq_vals = set(clean_series.unique())
+        # Check if 0/1 binary column has a boolean name hint
+        is_bool_named = col_name.startswith(("is_", "has_", "flag_")) or col_name in ("active", "enabled", "selected")
+        if uniq_vals.issubset({0, 1}) and len(uniq_vals) == 2 and is_bool_named:
+            return "boolean"
+
+        # Unique id check for numeric columns
         if series.nunique() / len(series) > 0.98 and len(series) > 50:
             return "high_cardinality_text"
         return "numeric"
 
-    if isinstance(series.dtype, pd.CategoricalDtype) or series.nunique() / len(series) < 0.5:
+    if isinstance(series.dtype, pd.CategoricalDtype):
         return "categorical"
 
     return "high_cardinality_text"
@@ -64,8 +156,10 @@ def profile_dataset(df: pd.DataFrame) -> dict:
     for col in df.columns:
         col_type = infer_column_type(df[col])
         column_types[col] = col_type
-        if col_type in ("categorical", "high_cardinality_text", "boolean"):
+        if col_type in ("categorical", "high_cardinality_text", "boolean", "numeric"):
             cardinality[col] = int(df[col].nunique())
+
+    id_columns = flag_id_columns(column_types, cardinality, total_rows)
 
     return {
         "rows": total_rows,
@@ -75,6 +169,7 @@ def profile_dataset(df: pd.DataFrame) -> dict:
         "duplicate_rows": duplicate_rows,
         "cardinality": cardinality,
         "column_types": column_types,
+        "id_columns": id_columns,
     }
 
 
@@ -82,16 +177,18 @@ def flag_id_columns(column_types: dict, cardinality: dict, n_rows: int) -> list[
     """Identify columns likely to be surrogate identifiers."""
     id_cols = []
     for col, ctype in column_types.items():
-        if ctype == "high_cardinality_text":
-            uniq_ratio = cardinality.get(col, 0) / n_rows if n_rows > 0 else 0
-            if uniq_ratio > 0.95:
-                id_cols.append(col)
+        col_lower = str(col).lower()
+        uniq_ratio = cardinality.get(col, 0) / n_rows if n_rows > 0 else 0
+        if (ctype == "high_cardinality_text" and uniq_ratio > 0.95) or (
+            (col_lower.endswith("_id") or col_lower in ("id", "identifier")) and uniq_ratio > 0.90
+        ):
+            id_cols.append(col)
     return id_cols
 
 
 def get_sample_dataset() -> pd.DataFrame:
     """Generate a realistic dataset for testing and demonstration."""
-    np.random.seed(42)
+    rng = np.random.default_rng(42)
     n = 250
 
     departments = ["Engineering", "Product", "Design", "Marketing", "Sales", "HR"]
@@ -99,12 +196,12 @@ def get_sample_dataset() -> pd.DataFrame:
     performance_ratings = ["Needs Improvement", "Meets Expectations", "Exceeds Expectations", "Outstanding"]
     remote_statuses = ["Remote", "Hybrid", "On-site"]
 
-    age = np.random.randint(22, 60, size=n)
-    years_experience = np.clip(age - 21 + np.random.randint(-2, 3, size=n), 0, 38)
-    base_salary = 45000 + (years_experience * 3800) + np.random.normal(0, 8000, size=n)
-    satisfaction_score = np.clip(np.random.normal(7.2, 1.8, size=n), 1.0, 10.0).round(1)
-    projects_completed = np.random.poisson(lam=5 + years_experience * 0.3, size=n)
-    bonus_percentage = np.clip((satisfaction_score * 2.5) + np.random.normal(0, 3, size=n), 0, 35).round(1)
+    age = rng.integers(22, 60, size=n)
+    years_experience = np.clip(age - 21 + rng.integers(-2, 3, size=n), 0, 38)
+    base_salary = 45000 + (years_experience * 3800) + rng.normal(0, 8000, size=n)
+    satisfaction_score = np.clip(rng.normal(7.2, 1.8, size=n), 1.0, 10.0).round(1)
+    projects_completed = rng.poisson(lam=5 + years_experience * 0.3, size=n)
+    bonus_percentage = np.clip((satisfaction_score * 2.5) + rng.normal(0, 3, size=n), 0, 35).round(1)
 
     df = pd.DataFrame({
         "Age": age,
@@ -113,17 +210,17 @@ def get_sample_dataset() -> pd.DataFrame:
         "SatisfactionScore": satisfaction_score,
         "ProjectsCompleted": projects_completed,
         "BonusPercentage": bonus_percentage,
-        "Department": np.random.choice(departments, size=n, p=[0.30, 0.18, 0.12, 0.15, 0.17, 0.08]),
-        "Education": np.random.choice(education_levels, size=n, p=[0.55, 0.30, 0.08, 0.07]),
-        "PerformanceRating": np.random.choice(performance_ratings, size=n, p=[0.10, 0.50, 0.30, 0.10]),
-        "WorkMode": np.random.choice(remote_statuses, size=n, p=[0.35, 0.45, 0.20]),
-        "Overtime": np.random.choice(["Yes", "No"], size=n, p=[0.28, 0.72]),
+        "Department": rng.choice(departments, size=n, p=[0.30, 0.18, 0.12, 0.15, 0.17, 0.08]),
+        "Education": rng.choice(education_levels, size=n, p=[0.55, 0.30, 0.08, 0.07]),
+        "PerformanceRating": rng.choice(performance_ratings, size=n, p=[0.10, 0.50, 0.30, 0.10]),
+        "WorkMode": rng.choice(remote_statuses, size=n, p=[0.35, 0.45, 0.20]),
+        "Overtime": rng.choice(["Yes", "No"], size=n, p=[0.28, 0.72]),
     })
 
-    missing_indices_sat = np.random.choice(n, size=12, replace=False)
+    missing_indices_sat = rng.choice(n, size=12, replace=False)
     df.loc[missing_indices_sat, "SatisfactionScore"] = np.nan
 
-    missing_indices_bonus = np.random.choice(n, size=8, replace=False)
+    missing_indices_bonus = rng.choice(n, size=8, replace=False)
     df.loc[missing_indices_bonus, "BonusPercentage"] = np.nan
 
     return df
