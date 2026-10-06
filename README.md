@@ -6,14 +6,13 @@
 
 [![Live App](https://img.shields.io/badge/LIVE%20APP-Open%20AutoInsight-2563eb?style=for-the-badge&logo=streamlit&logoColor=white)](https://autoinsight-gokulsanjay.streamlit.app/)
 [![License](https://img.shields.io/badge/LICENSE-MIT-0f172a?style=for-the-badge)](LICENSE)
-[![Python](https://img.shields.io/badge/PYTHON-3.9%2B-0f172a?style=for-the-badge&logo=python&logoColor=38bdf8)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/PYTHON-3.10%2B-0f172a?style=for-the-badge&logo=python&logoColor=38bdf8)](https://www.python.org/)
 
 [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![pandas](https://img.shields.io/badge/pandas-150458?style=flat-square&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
 [![NumPy](https://img.shields.io/badge/NumPy-013243?style=flat-square&logo=numpy&logoColor=white)](https://numpy.org/)
 [![Matplotlib](https://img.shields.io/badge/Matplotlib-11557c?style=flat-square)](https://matplotlib.org/)
 [![Seaborn](https://img.shields.io/badge/Seaborn-4c72b0?style=flat-square)](https://seaborn.pydata.org/)
-[![Plotly](https://img.shields.io/badge/Plotly-3F4F75?style=flat-square&logo=plotly&logoColor=white)](https://plotly.com/python/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-22c55e?style=flat-square)](CONTRIBUTING.md)
 
 [**Live App**](https://autoinsight-gokulsanjay.streamlit.app/) &nbsp;·&nbsp; [**Features**](#features) &nbsp;·&nbsp; [**Quick Start**](#quick-start) &nbsp;·&nbsp; [**How It Works**](#how-it-works) &nbsp;·&nbsp; [**FAQ**](#faq) &nbsp;·&nbsp; [**Contribute**](#contributing)
@@ -32,10 +31,7 @@ Each result is a standalone chart. Download any chart as a PNG, or download all 
 
 **Try it now:** [autoinsight-gokulsanjay.streamlit.app](https://autoinsight-gokulsanjay.streamlit.app/). Click **Load Demo Dataset** for an instant example, or upload your own CSV.
 
-<!--
-  Add a screenshot or GIF here:
-  <p align="center"><img src="docs/demo.gif" alt="AutoInsight EDA dashboard" width="90%"></p>
--->
+<p align="center"><img src="assets/dashboard_preview.svg" alt="AutoInsight EDA dashboard" width="100%"></p>
 
 <br>
 
@@ -91,7 +87,7 @@ No external APIs and no API keys. Run it on your own machine for fully private a
 </p>
 
 1. **Load**: the CSV is read into a pandas DataFrame, with clear error messages for unreadable files.
-2. **Profile**: each column is classified as numeric, categorical, boolean, datetime or high-cardinality text. Missing values, duplicates and cardinality are computed.
+2. **Profile**: dataset health metrics (rows, columns, memory usage, duplicate rows, missing percentages) and semantic column types (numeric, categorical, boolean, datetime, ID-like) are computed in a single cached pass.
 3. **Analyze**: univariate, bivariate and categorical analyses run automatically, with limits and sampling so large files stay responsive.
 4. **Export**: charts are grouped into sections on the page, and a ZIP of every figure is built in memory.
 
@@ -128,9 +124,9 @@ autoinsight_eda_<your_file>.zip
 |:--|:--|
 | Interface | [Streamlit](https://streamlit.io/) |
 | Data processing | [pandas](https://pandas.pydata.org/), [NumPy](https://numpy.org/) |
-| Visualization | [Matplotlib](https://matplotlib.org/), [Seaborn](https://seaborn.pydata.org/), [Plotly](https://plotly.com/python/) |
+| Visualization | [Matplotlib](https://matplotlib.org/), [Seaborn](https://seaborn.pydata.org/) |
 | Hosting | [Streamlit Community Cloud](https://streamlit.io/cloud) |
-| Language | Python 3.9+ |
+| Language | Python 3.10+ |
 
 <br>
 
@@ -168,11 +164,22 @@ AutoInsight/
 ├── modules/
 │   ├── __init__.py
 │   ├── data_loader.py     CSV loading, type inference, profiling, demo dataset
-│   └── eda.py             Chart generation and PNG / ZIP export helpers
+│   ├── eda.py             Chart generation and PNG / ZIP export helpers
+│   └── pipeline.py        Headless end-to-end analysis orchestration
+├── tests/                 Comprehensive test suite (AppTest, edge cases, regression)
 ├── assets/
 │   ├── banner.svg         README banner
+│   ├── dashboard_preview.svg README preview
 │   └── workflow.svg       README workflow diagram
-├── requirements.txt
+├── data/
+│   └── sample_dataset.csv Sample CSV dataset for testing
+├── .github/
+│   ├── workflows/ci.yml   GitHub Actions CI workflow
+│   ├── dependabot.yml     Dependabot automated updates
+│   └── pull_request_template.md PR template
+├── pyproject.toml         Project metadata, ruff, mypy, and pytest configs
+├── requirements.txt       Pinned runtime dependencies
+├── requirements-dev.txt   Development and testing tools
 ├── CONTRIBUTING.md
 ├── LICENSE
 └── README.md
@@ -228,8 +235,6 @@ Those tools produce one HTML report. AutoInsight is an interactive app that give
 ## Roadmap
 
 - [ ] Excel (`.xlsx`) and JSON upload
-- [ ] Optional target-column analysis
-- [ ] Interactive Plotly versions of the charts
 - [ ] Exportable PDF or HTML summary report
 - [ ] Time-series charts for datetime columns
 - [ ] Plain-English summaries of key findings

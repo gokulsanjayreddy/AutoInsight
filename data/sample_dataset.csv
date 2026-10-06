@@ -1,0 +1,16 @@
+employee_id,department,education,years_experience,salary,satisfaction_score,work_mode,performance_rating,bonus_pct
+E1001,Engineering,Bachelor's,5,64000,8.2,Remote,Exceeds Expectations,15.5
+E1002,Sales,Bachelor's,3,56400,6.5,On-site,Meets Expectations,8.0
+E1003,Marketing,Master's,7,71600,7.8,Hybrid,Outstanding,22.0
+E1004,Engineering,Master's,10,83000,9.1,Remote,Outstanding,25.0
+E1005,Product,Bachelor's,4,60200,7.0,Hybrid,Meets Expectations,10.0
+E1006,HR,Bachelor's,2,52600,5.8,On-site,Needs Improvement,5.0
+E1007,Design,Master's,6,67800,8.5,Remote,Exceeds Expectations,18.0
+E1008,Sales,High School,8,75400,6.9,On-site,Meets Expectations,12.5
+E1009,Engineering,PhD,12,90600,9.4,Remote,Outstanding,28.0
+E1010,Marketing,Bachelor's,1,48800,6.1,Hybrid,Meets Expectations,6.0
+E1011,Product,Master's,8,75400,8.0,Remote,Exceeds Expectations,20.0
+E1012,HR,Bachelor's,5,64000,7.3,Hybrid,Meets Expectations,11.0
+E1013,Sales,Bachelor's,9,79200,7.1,On-site,Exceeds Expectations,17.0
+E1014,Engineering,Bachelor's,3,56400,8.0,Remote,Meets Expectations,9.5
+E1015,Design,Bachelor's,4,60200,8.7,Hybrid,Outstanding,21.5
