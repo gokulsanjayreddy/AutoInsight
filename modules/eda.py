@@ -6,9 +6,12 @@ data analysis across all column interactions.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import itertools
+import re
 import time
+import unicodedata
 import zipfile
 from collections.abc import Sequence
 
@@ -19,11 +22,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns  # type: ignore[import-untyped]
-
-from modules.zip_utils import (
-    build_safe_zip_path,
-    validate_zip_archive,
-)
 
 sns.set_theme(style="whitegrid", palette="deep")
 plt.rcParams.update({
@@ -53,17 +51,337 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 150) -> bytes:
     return buf.getvalue()
 
 
+# Windows reserved device names (DOS device names).
+# Cannot be used as stem (before extension) or directory name in Win32.
+WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset({
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "CLOCK$",
+    "CONIN$",
+    "CONOUT$",
+    "COM0",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT0",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+})
+
+# Windows forbidden characters: < > : " / \ | ? * and ASCII control characters (0-31, 127)
+WINDOWS_INVALID_CHARS_RE = re.compile(r'[\x00-\x1f\x7f<>:"/\\|?*]')
+
+# Redundant underscores pattern
+MULTI_UNDERSCORE_RE = re.compile(r"_+")
+
+
+def normalize_for_collision(path: str) -> str:
+    """Return a Unicode-normalized casefolded string for collision detection.
+
+    Ensures that both case variations (e.g. 'Salary.png' vs 'salary.png') and
+    Unicode normalization forms (NFC vs NFD) map to identical collision keys.
+    """
+    return unicodedata.normalize("NFC", path).casefold()
+
+
+def sanitize_filename_stem(
+    name: str,
+    max_len: int = 55,
+    fallback: str = "item",
+) -> str:
+    """Sanitize a filename stem to be Windows-safe, readable, and bounded in length.
+
+    Transformations:
+    1. Normalize Unicode to NFC form.
+    2. Replace Windows-invalid characters, control characters, spaces, and separators with '_'.
+    3. Collapse consecutive underscores and strip leading/trailing dots, spaces, and underscores.
+    4. Guard against empty names by falling back to `fallback`.
+    5. Disambiguate Windows reserved device names (e.g. 'CON' -> 'CON_').
+    6. Truncate long names sensibly to `max_len`, preserving a readable prefix and
+       appending a deterministic short hash suffix (e.g., '_..._A1B2').
+    """
+    if not name:
+        name = fallback
+
+    # 1. Unicode NFC normalization
+    normalized = unicodedata.normalize("NFC", name)
+
+    # 2. Replace invalid / separator / control characters with underscore
+    cleaned = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in normalized)
+
+    # 3. Collapse multiple underscores
+    cleaned = MULTI_UNDERSCORE_RE.sub("_", cleaned)
+
+    # Strip leading and trailing dots, spaces, underscores
+    cleaned = cleaned.strip(". _")
+
+    # 4. Fallback if empty or all characters were stripped
+    if not cleaned:
+        cleaned = fallback
+
+    # 5. Check Windows reserved device names (case-insensitive check)
+    if cleaned.upper() in WINDOWS_RESERVED_NAMES:
+        cleaned = f"{cleaned}_"
+
+    # 6. Length truncation
+    if len(cleaned) > max_len:
+        digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:4].upper()
+        hash_suffix = f"_..._{digest}"
+        keep_len = max(1, max_len - len(hash_suffix))
+        prefix = cleaned[:keep_len].rstrip("._")
+        if not prefix:
+            prefix = cleaned[:keep_len]
+        cleaned = f"{prefix}{hash_suffix}"
+        if cleaned.upper() in WINDOWS_RESERVED_NAMES:
+            cleaned = f"{cleaned}_"
+
+    return cleaned
+
+
+def sanitize_folder_component(
+    folder: str,
+    max_len: int = 40,
+    fallback: str = "plots",
+) -> str:
+    """Sanitize a directory path to be Windows-safe, preserving subfolder structure if any."""
+    folder = folder.replace("\\", "/").strip("/ ")
+    parts = [p for p in folder.split("/") if p and p != "." and p != ".."]
+    if not parts:
+        return fallback
+
+    sanitized_parts = []
+    for part in parts:
+        clean_part = sanitize_filename_stem(part, max_len=max_len, fallback=fallback)
+        sanitized_parts.append(clean_part)
+
+    return "/".join(sanitized_parts)
+
+
+def generate_safe_zip_entry_path(
+    folder: str,
+    name_base: str,
+    used_names: set[str],
+    ext: str = ".png",
+    max_stem_len: int = 55,
+) -> str:
+    """Generate a Windows-safe relative ZIP path with normalized collision tracking.
+
+    Parameters
+    ----------
+    folder : str
+        Directory category (e.g. '01_univariate_numeric_distributions').
+    name_base : str
+        Base filename before extension (e.g. column name or metric name).
+    used_names : set[str]
+        Set of normalized collision keys (from `normalize_for_collision`) already reserved.
+        Updated in-place with the selected candidate's normalized key.
+    ext : str, optional
+        File extension, default '.png'.
+    max_stem_len : int, optional
+        Maximum length of the filename stem.
+
+    Returns
+    -------
+    str
+        The final Windows-safe relative ZIP path (e.g. '01_dists/Salary.png' or
+        '01_dists/salary_2.png').
+    """
+    clean_folder = sanitize_folder_component(folder)
+
+    # Strip extension if already present in name_base
+    if ext and name_base.lower().endswith(ext.lower()):
+        name_base = name_base[:-len(ext)]
+
+    clean_stem = sanitize_filename_stem(name_base, max_len=max_stem_len)
+    zip_path = f"{clean_folder}/{clean_stem}{ext}"
+
+    candidate_key = normalize_for_collision(zip_path)
+    if candidate_key not in used_names:
+        used_names.add(candidate_key)
+        return zip_path
+
+    # Collision detected: generate deterministic suffix _2, _3, ...
+    counter = 2
+    suffix_sep = "" if clean_stem.endswith("_") else "_"
+    while True:
+        zip_path = f"{clean_folder}/{clean_stem}{suffix_sep}{counter}{ext}"
+        candidate_key = normalize_for_collision(zip_path)
+        if candidate_key not in used_names:
+            used_names.add(candidate_key)
+            return zip_path
+        counter += 1
+
+
+def build_safe_zip_path(
+    folder: str,
+    name_base: str,
+    ext: str = ".png",
+    used_paths_casefolded: set[str] | None = None,
+    max_stem_len: int = 55,
+) -> str:
+    """Build a Windows-safe relative ZIP path with case-insensitive collision handling.
+
+    Compatibility wrapper around generate_safe_zip_entry_path.
+    """
+    if used_paths_casefolded is None:
+        used_paths_casefolded = set()
+    return generate_safe_zip_entry_path(
+        folder=folder,
+        name_base=name_base,
+        used_names=used_paths_casefolded,
+        ext=ext,
+        max_stem_len=max_stem_len,
+    )
+
+
+def _check_trailing_spaces_dots(path: str, part: str) -> None:
+    """Validate trailing spaces and periods on component and stem."""
+    if part.endswith(" "):
+        raise ValueError(
+            f"ZIP entry '{path}' component '{part}' has trailing space (invalid on Windows)."
+        )
+    if part.endswith("."):
+        raise ValueError(
+            f"ZIP entry '{path}' component '{part}' has trailing period (invalid on Windows)."
+        )
+    if "." in part:
+        part_stem = part.rsplit(".", 1)[0]
+        if part_stem.endswith(" "):
+            raise ValueError(
+                f"ZIP entry '{path}' component stem '{part_stem}' has trailing space before "
+                "extension (invalid on Windows)."
+            )
+        if part_stem.endswith("."):
+            raise ValueError(
+                f"ZIP entry '{path}' component stem '{part_stem}' has trailing period before "
+                "extension (invalid on Windows)."
+            )
+
+
+def _validate_path_component(path: str, part: str) -> None:
+    """Validate a single path component for Windows filesystem safety."""
+    if not part or part == ".":
+        raise ValueError(f"ZIP entry '{path}' contains empty or '.' component.")
+    if part == "..":
+        raise ValueError(f"ZIP entry '{path}' contains directory traversal '..' component.")
+
+    _check_trailing_spaces_dots(path, part)
+
+    if part.startswith(" "):
+        raise ValueError(
+            f"ZIP entry '{path}' component '{part}' has leading space (invalid on Windows)."
+        )
+
+    invalid_match = WINDOWS_INVALID_CHARS_RE.search(part)
+    if invalid_match:
+        raise ValueError(
+            f"ZIP entry '{path}' component '{part}' contains Windows-invalid character: "
+            f"{invalid_match.group()!r}"
+        )
+
+    stem = part.split(".")[0].upper()
+    if stem in WINDOWS_RESERVED_NAMES or part.upper() in WINDOWS_RESERVED_NAMES:
+        raise ValueError(
+            f"ZIP entry '{path}' component '{part}' uses Windows reserved device name '{stem}'."
+        )
+
+
+def validate_zip_archive(
+    zip_bytes: bytes,
+    max_path_len: int = 180,
+    allow_empty: bool = False,
+) -> None:
+    """Validate in-memory ZIP archive for integrity and complete Windows compatibility.
+
+    Raises
+    ------
+    ValueError
+        If any validation rule is violated, with a clear explanation of the offending entry.
+    """
+    if not zipfile.is_zipfile(io.BytesIO(zip_bytes)):
+        raise ValueError("Invalid ZIP archive: data is not a valid zip archive.")
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+        corrupted_entry = zf.testzip()
+        if corrupted_entry is not None:
+            raise ValueError(f"Corrupted ZIP entry detected: '{corrupted_entry}' failed CRC check.")
+
+        infolist = zf.infolist()
+        if not infolist and not allow_empty:
+            raise ValueError("Invalid ZIP archive: archive contains 0 entries.")
+
+        seen_exact: set[str] = set()
+        seen_normalized: set[str] = set()
+
+        for info in infolist:
+            path = info.filename
+
+            # 1. Non-empty check
+            if not path or not path.strip():
+                raise ValueError(f"Invalid ZIP entry: empty or whitespace-only filename '{path}'.")
+
+            # 2. Exact duplicate check
+            if path in seen_exact:
+                raise ValueError(f"Duplicate ZIP entry detected: '{path}' appears multiple times.")
+            seen_exact.add(path)
+
+            # 3. Case-insensitive and Unicode-normalized collision check
+            collision_key = normalize_for_collision(path)
+            if collision_key in seen_normalized:
+                raise ValueError(
+                    f"Windows case-insensitive collision detected: '{path}' collides with an "
+                    "existing entry."
+                )
+            seen_normalized.add(collision_key)
+
+            # 4. Path separator check: must use '/', never '\'
+            if "\\" in path:
+                raise ValueError(f"ZIP entry contains backslash path separator: '{path}'")
+
+            # Must not have leading slash
+            if path.startswith("/"):
+                raise ValueError(f"ZIP entry contains forbidden leading slash: '{path}'")
+
+            # 5. Path length check
+            if len(path) > max_path_len:
+                raise ValueError(
+                    f"ZIP entry path length ({len(path)}) exceeds Windows limit "
+                    f"({max_path_len}): '{path}'"
+                )
+
+            # 6. Check each component
+            normalized_path = path[:-1] if path.endswith("/") else path
+            parts = normalized_path.split("/")
+            for part in parts:
+                _validate_path_component(path, part)
+
+
 def create_all_plots_zip(named_figures: Sequence[tuple[str, str, bytes | plt.Figure]]) -> bytes:
     """Create an in-memory zip archive containing all generated plots with Windows-safe paths."""
     zip_buffer = io.BytesIO()
-    used_paths_casefolded: set[str] = set()
+    used_names: set[str] = set()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for folder, name_base, content in named_figures:
-            zip_path = build_safe_zip_path(
+            zip_path = generate_safe_zip_entry_path(
                 folder=folder,
                 name_base=name_base,
+                used_names=used_names,
                 ext=".png",
-                used_paths_casefolded=used_paths_casefolded,
             )
 
             if isinstance(content, bytes):

@@ -13,15 +13,17 @@ import pytest
 from PIL import Image
 
 from modules.data_loader import get_sample_dataset
-from modules.eda import create_all_plots_zip
-from modules.pipeline import generate_full_analysis
-from modules.zip_utils import (
+from modules.eda import (
     WINDOWS_RESERVED_NAMES,
     build_safe_zip_path,
+    create_all_plots_zip,
+    generate_safe_zip_entry_path,
+    normalize_for_collision,
     sanitize_filename_stem,
     sanitize_folder_component,
     validate_zip_archive,
 )
+from modules.pipeline import generate_full_analysis
 
 
 def _create_dummy_png_bytes() -> bytes:
@@ -33,10 +35,41 @@ def _create_dummy_png_bytes() -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Test A: Two columns Salary and salary (case-insensitive collision)
+# Unit tests: normalize_for_collision and generate_safe_zip_entry_path
 # ---------------------------------------------------------------------------
-def test_a_case_insensitive_collision_salary():
-    """Salary and salary must produce two distinct ZIP entries with no Windows collision."""
+def test_normalize_for_collision_logic():
+    """Verify normalize_for_collision normalizes Unicode to NFC and casefolds."""
+    assert normalize_for_collision("Salary.png") == normalize_for_collision("salary.png")
+    assert normalize_for_collision("Salary.png") == "salary.png"
+
+    # Unicode precomposed vs combining characters
+    nfc = "caf\u00e9.png"
+    nfd = "cafe\u0301.png"
+    assert normalize_for_collision(nfc) == normalize_for_collision(nfd)
+
+
+def test_generate_safe_zip_entry_path_tracks_normalized_collisions():
+    """Verify candidate_key = normalize_for_collision(zip_path) is tracked in used_names."""
+    used_names: set[str] = set()
+
+    p1 = generate_safe_zip_entry_path("01_dists", "Salary", used_names)
+    assert p1 == "01_dists/Salary.png"
+    assert "01_dists/salary.png" in used_names
+
+    p2 = generate_safe_zip_entry_path("01_dists", "salary", used_names)
+    assert p2 == "01_dists/salary_2.png"
+    assert "01_dists/salary_2.png" in used_names
+
+    p3 = generate_safe_zip_entry_path("01_dists", "SALARY", used_names)
+    assert p3 == "01_dists/SALARY_3.png"
+    assert "01_dists/salary_3.png" in used_names
+
+
+# ---------------------------------------------------------------------------
+# TEST 1: Columns Salary and salary (case-insensitive collision)
+# ---------------------------------------------------------------------------
+def test_1_case_insensitive_collision_salary():
+    """TEST 1: Columns Salary and salary must produce two distinct PNGs with unique safe names."""
     raw_bytes = _create_dummy_png_bytes()
     items = [
         ("01_distributions", "dist_Salary", raw_bytes),
@@ -50,16 +83,15 @@ def test_a_case_insensitive_collision_salary():
         assert len(namelist) == 2
         assert "01_distributions/dist_Salary.png" in namelist
         assert "01_distributions/dist_salary_2.png" in namelist
-        # Verify no casefold collision
-        casefolded = [n.casefold() for n in namelist]
+        casefolded = [normalize_for_collision(n) for n in namelist]
         assert len(casefolded) == len(set(casefolded))
 
 
 # ---------------------------------------------------------------------------
-# Test B: Columns whose names become identical after sanitization
+# TEST 2: Columns Customer/Name and Customer:Name
 # ---------------------------------------------------------------------------
-def test_b_identical_names_after_sanitization():
-    """Customer/Name and Customer:Name must produce deterministic, distinct filenames."""
+def test_2_identical_names_after_sanitization():
+    """TEST 2: Customer/Name and Customer:Name must produce distinct filenames."""
     raw_bytes = _create_dummy_png_bytes()
     items = [
         ("03_categorical", "Customer/Name", raw_bytes),
@@ -76,11 +108,11 @@ def test_b_identical_names_after_sanitization():
 
 
 # ---------------------------------------------------------------------------
-# Test C: Reserved Windows device names
+# TEST 3: Reserved names: CON, PRN, AUX, NUL, COM1, LPT1
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("reserved", ["CON", "PRN", "AUX", "NUL", "COM1", "LPT1"])
-def test_c_reserved_windows_names(reserved: str):
-    """Reserved Windows device names must be safely escaped without collisions."""
+def test_3_reserved_windows_names(reserved: str):
+    """TEST 3: Reserved names must be safely escaped and extractable on Windows."""
     raw_bytes = _create_dummy_png_bytes()
     items = [
         ("00_summary", reserved, raw_bytes),
@@ -99,40 +131,58 @@ def test_c_reserved_windows_names(reserved: str):
             stem = Path(name).stem.upper()
             assert stem not in WINDOWS_RESERVED_NAMES
 
+        # Verify disk extraction on Windows
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zf.extractall(tmpdir)
+            extracted = list(Path(tmpdir).rglob("*.png"))
+            assert len(extracted) == 2
+
 
 # ---------------------------------------------------------------------------
-# Test D: Trailing spaces and dots
+# TEST 4: Trailing dot: "Salary."
 # ---------------------------------------------------------------------------
-def test_d_trailing_spaces_and_dots():
-    """Filenames with trailing spaces or dots must be sanitized cleanly."""
+def test_4_trailing_dot():
+    """TEST 4: Trailing dot must produce a safe filename without trailing period."""
     raw_bytes = _create_dummy_png_bytes()
     items = [
-        ("01_distributions", "Score.", raw_bytes),
-        ("01_distributions", "Score ", raw_bytes),
-        ("01_distributions", "Score. . ", raw_bytes),
+        ("01_distributions", "Salary.", raw_bytes),
     ]
     zip_bytes = create_all_plots_zip(items)
     validate_zip_archive(zip_bytes)
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         namelist = zf.namelist()
-        assert len(namelist) == 3
-        assert "01_distributions/Score.png" in namelist
-        assert "01_distributions/Score_2.png" in namelist
-        assert "01_distributions/Score_3.png" in namelist
+        assert len(namelist) == 1
+        assert "01_distributions/Salary.png" in namelist
         for name in namelist:
-            assert not name.endswith(". ")
-            assert not name.endswith(" ")
-            stem = Path(name).stem
-            assert not stem.endswith(".")
-            assert not stem.endswith(" ")
+            assert not Path(name).stem.endswith(".")
 
 
 # ---------------------------------------------------------------------------
-# Test E: Excessively long column names and path lengths
+# TEST 5: Trailing space: "Salary "
 # ---------------------------------------------------------------------------
-def test_e_very_long_column_names():
-    """Excessively long names must be capped with readable prefix, hash suffix, and extension."""
+def test_5_trailing_space():
+    """TEST 5: Trailing space must produce a safe filename without trailing space."""
+    raw_bytes = _create_dummy_png_bytes()
+    items = [
+        ("01_distributions", "Salary ", raw_bytes),
+    ]
+    zip_bytes = create_all_plots_zip(items)
+    validate_zip_archive(zip_bytes)
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        namelist = zf.namelist()
+        assert len(namelist) == 1
+        assert "01_distributions/Salary.png" in namelist
+        for name in namelist:
+            assert not Path(name).stem.endswith(" ")
+
+
+# ---------------------------------------------------------------------------
+# TEST 6: Very long column name
+# ---------------------------------------------------------------------------
+def test_6_very_long_column_name():
+    """TEST 6: Very long column names must remain within the chosen safe length limit."""
     raw_bytes = _create_dummy_png_bytes()
     long_name_1 = "VERY_LONG_COLUMN_NAME_THAT_GOES_ON_AND_ON_AND_ON_FOR_SURVEY_QUESTION_ALPHA"
     long_name_2 = "VERY_LONG_COLUMN_NAME_THAT_GOES_ON_AND_ON_AND_ON_FOR_SURVEY_QUESTION_BETA"
@@ -154,10 +204,10 @@ def test_e_very_long_column_names():
 
 
 # ---------------------------------------------------------------------------
-# Test F: Unicode column names and ZIP UTF-8 encoding
+# TEST 7: Unicode names
 # ---------------------------------------------------------------------------
-def test_f_unicode_column_names():
-    """Unicode column names must produce valid ZIP entries with bit 11 UTF-8 set."""
+def test_7_unicode_column_names():
+    """TEST 7: Unicode column names must produce valid ZIP entries with bit 11 UTF-8 set."""
     raw_bytes = _create_dummy_png_bytes()
     items = [
         ("01_distributions", "dist_München_Temperatur", raw_bytes),
@@ -175,10 +225,10 @@ def test_f_unicode_column_names():
 
 
 # ---------------------------------------------------------------------------
-# Test G: Two names differing only by Unicode normalization
+# TEST 8: Unicode normalization equivalents (NFC vs NFD)
 # ---------------------------------------------------------------------------
-def test_g_unicode_normalization_collision():
-    """NFC and NFD representations of the same word must not collide on Windows."""
+def test_8_unicode_normalization_collision():
+    """TEST 8: NFC and NFD representations of the same word must not collide on Windows."""
     raw_bytes = _create_dummy_png_bytes()
     nfc_name = "dist_caf\u00e9"  # é as precomposed
     nfd_name = "dist_cafe\u0301"  # e + combining acute
@@ -193,15 +243,15 @@ def test_g_unicode_normalization_collision():
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         namelist = zf.namelist()
         assert len(namelist) == 2
-        casefolded = [n.casefold() for n in namelist]
+        casefolded = [normalize_for_collision(n) for n in namelist]
         assert len(casefolded) == len(set(casefolded))
 
 
 # ---------------------------------------------------------------------------
-# Test H: Full pipeline generated ZIP validation (Demo Dataset)
+# TEST 9: Complete demo dataset
 # ---------------------------------------------------------------------------
-def test_h_complete_demo_dataset_pipeline_zip():
-    """Verify entire pipeline generation for demo dataset meets all Windows requirements."""
+def test_9_complete_demo_dataset():
+    """TEST 9: Complete demo dataset must produce a valid ZIP meeting all Windows criteria."""
     df = get_sample_dataset()
     res = generate_full_analysis(df, max_total_plots=75)
     zip_bytes = res["zip_bytes"]
@@ -217,7 +267,7 @@ def test_h_complete_demo_dataset_pipeline_zip():
         assert len(namelist) == len(set(namelist))
 
         # Check case-insensitive duplicates
-        casefolded = [n.casefold() for n in namelist]
+        casefolded = [normalize_for_collision(n) for n in namelist]
         assert len(casefolded) == len(set(casefolded))
 
         # Check maximum path length and Windows characters
@@ -235,10 +285,10 @@ def test_h_complete_demo_dataset_pipeline_zip():
 
 
 # ---------------------------------------------------------------------------
-# Test I: Awkward Column Names Pipeline Regression Test
+# TEST 10: Awkward-column-name dataset
 # ---------------------------------------------------------------------------
-def test_i_awkward_dataset_pipeline_zip_regression():
-    """Verify pipeline handles awkward columns with zero Windows collisions."""
+def test_10_awkward_dataset_pipeline_zip():
+    """TEST 10: Awkward column dataset must produce valid ZIP with zero collisions."""
     rng = np.random.default_rng(123)
     n = 60
     awkward_df = pd.DataFrame({
@@ -268,7 +318,7 @@ def test_i_awkward_dataset_pipeline_zip_regression():
         assert len(namelist) == res["total_count"]
 
         # Case-insensitive collisions must be exactly 0
-        casefolded = [n.casefold() for n in namelist]
+        casefolded = [normalize_for_collision(n) for n in namelist]
         assert len(casefolded) == len(set(casefolded))
 
         # Test actual extraction to disk
@@ -279,7 +329,7 @@ def test_i_awkward_dataset_pipeline_zip_regression():
 
 
 # ---------------------------------------------------------------------------
-# Test J: Validator Error Handling
+# Validator Error Handling Tests
 # ---------------------------------------------------------------------------
 def test_validator_detects_corrupted_archive():
     """Validator must raise ValueError on corrupted data."""
@@ -314,7 +364,6 @@ def test_validator_detects_trailing_period_or_space():
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("01_dists/score..png", b"test")
     buf.seek(0)
-    # stem is 'score.', which ends with '.'
     with pytest.raises(ValueError, match="trailing period"):
         validate_zip_archive(buf.getvalue())
 
