@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import time
 import zipfile
 from collections.abc import Sequence
 
@@ -18,6 +19,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns  # type: ignore[import-untyped]
+
+from modules.zip_utils import (
+    build_safe_zip_path,
+    validate_zip_archive,
+)
 
 sns.set_theme(style="whitegrid", palette="deep")
 plt.rcParams.update({
@@ -48,18 +54,17 @@ def fig_to_png_bytes(fig: plt.Figure, dpi: int = 150) -> bytes:
 
 
 def create_all_plots_zip(named_figures: Sequence[tuple[str, str, bytes | plt.Figure]]) -> bytes:
-    """Create an in-memory zip archive containing all generated plots."""
+    """Create an in-memory zip archive containing all generated plots with Windows-safe paths."""
     zip_buffer = io.BytesIO()
+    used_paths_casefolded: set[str] = set()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        used_names: set[str] = set()
         for folder, name_base, content in named_figures:
-            clean_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in name_base)
-            zip_path = f"{folder}/{clean_name}.png"
-            counter = 1
-            while zip_path in used_names:
-                zip_path = f"{folder}/{clean_name}_{counter}.png"
-                counter += 1
-            used_names.add(zip_path)
+            zip_path = build_safe_zip_path(
+                folder=folder,
+                name_base=name_base,
+                ext=".png",
+                used_paths_casefolded=used_paths_casefolded,
+            )
 
             if isinstance(content, bytes):
                 png_data = content
@@ -68,10 +73,18 @@ def create_all_plots_zip(named_figures: Sequence[tuple[str, str, bytes | plt.Fig
             else:
                 png_data = fig_to_png_bytes(content)
                 plt.close(content)
-            zf.writestr(zip_path, png_data)
+
+            zinfo = zipfile.ZipInfo(zip_path)
+            zinfo.date_time = time.localtime(time.time())[:6]
+            zinfo.compress_type = zipfile.ZIP_DEFLATED
+            zinfo.flag_bits |= 0x800  # Explicitly enforce UTF-8 filename encoding flag (bit 11)
+            zinfo.external_attr = 0o644 << 16
+            zf.writestr(zinfo, png_data)
 
     zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+    zip_bytes = zip_buffer.getvalue()
+    validate_zip_archive(zip_bytes, allow_empty=(len(named_figures) == 0))
+    return zip_bytes
 
 
 def get_categorical_columns(

@@ -26,6 +26,7 @@ from modules.eda import (
     plot_pairwise_scatter,
     plot_summary_statistics,
 )
+from modules.zip_utils import sanitize_filename_stem
 
 
 class PlotCollector:
@@ -68,8 +69,9 @@ class PlotCollector:
         png = fig_to_png_bytes(fig)
         plt.close(fig)
 
+        safe_dl_name = sanitize_filename_stem(download_filename, max_len=60, fallback="plot")
         self.all_named_figures.append((folder, file_basename, png))
-        self.card_data[section_key].append((title, download_filename, png))
+        self.card_data[section_key].append((title, safe_dl_name, png))
         self.total_count += 1
         return True
 

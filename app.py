@@ -20,6 +20,7 @@ from modules.data_loader import (
     profile_dataset,
 )
 from modules.pipeline import generate_full_analysis
+from modules.zip_utils import sanitize_filename_stem
 
 st.set_page_config(
     page_title="AutoInsight - Automated Data Analysis",
@@ -118,13 +119,14 @@ def render_plot_card(
     key: str,
 ) -> None:
     """Render a standalone plot inside a bordered container with a PNG download button."""
+    safe_download_name = sanitize_filename_stem(download_filename, max_len=60, fallback="plot")
     with st.container(border=True):
         st.markdown(f"**{title}**")
         st.image(png_bytes, width="stretch")
         st.download_button(
             label="Download Plot (PNG)",
             data=png_bytes,
-            file_name=f"{download_filename}.png",
+            file_name=f"{safe_download_name}.png",
             mime="image/png",
             key=key,
             width="stretch",
@@ -410,8 +412,8 @@ def main() -> None:
 
     df: pd.DataFrame = st.session_state.df
     source_name = st.session_state.source_name or "dataset"
-    clean_dl_name = re.sub(r"(?i)\.csv$", "", source_name)
-    clean_dl_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", clean_dl_name)
+    raw_dl_name = re.sub(r"(?i)\.csv$", "", source_name)
+    clean_dl_name = sanitize_filename_stem(raw_dl_name, max_len=45, fallback="dataset")
 
     profiling = cached_profile_dataset(df)
     render_overview_metrics(profiling, source_name)
