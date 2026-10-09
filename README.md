@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="AutoInsight: automated exploratory data analysis for CSV files" width="100%">
+<img src="assets/banner.png" alt="AutoInsight: automated exploratory data analysis for CSV files" width="100%">
 
 <br>
 
@@ -31,7 +31,24 @@ Each result is a standalone chart. Download any chart as a PNG, or download all 
 
 **Try it now:** [autoinsight-gokulsanjay.streamlit.app](https://autoinsight-gokulsanjay.streamlit.app/). Click **Load Demo Dataset** for an instant example, or upload your own CSV.
 
-<p align="center"><img src="assets/dashboard_preview.svg" alt="AutoInsight EDA dashboard" width="100%"></p>
+## Why AutoInsight?
+
+**Most profiling tools give you a report to read. AutoInsight gives you charts to use.**
+
+Tools like ydata-profiling and Sweetviz generate one long HTML report. That works for exploring, but when you need a figure for a slide, a document or a notebook, you end up screenshotting, cropping or re-plotting it yourself. AutoInsight returns every chart as its own PNG, organised by analysis type, so the output is ready to drop into your work.
+
+| | AutoInsight | HTML profiling report |
+|:--|:--|:--|
+| **Output** | One PNG per chart, or one ZIP sorted into folders by analysis type | One combined HTML page |
+| **Reuse in slides and docs** | Download the exact chart you need | Screenshot or re-plot |
+| **Setup** | Open the web app and upload a CSV, no code | Python environment and a script |
+| **Depth** | A fast first pass over distributions, outliers, correlations and relationships | Broader and deeper dataset diagnostics |
+
+**The problem it solves:** the slow part of a first look at a dataset is not running the statistics, it is turning the results into clean, presentable figures. AutoInsight does both in one upload.
+
+If you need exhaustive data-quality alerts or dataset comparison, a full profiler is the better tool. If you need a fast set of shareable charts, use AutoInsight.
+
+<p align="center"><img src="assets/image.png" alt="AutoInsight EDA dashboard" width="100%"></p>
 
 <br>
 
@@ -83,7 +100,7 @@ No external APIs and no API keys. Run it on your own machine for fully private a
 ## How It Works
 
 <p align="center">
-  <img src="assets/workflow.svg" alt="Workflow: upload, profile, analyze, visualize, export" width="100%">
+  <img src="assets/workflow.png" alt="Workflow: upload, profile, analyze, visualize, export" width="100%">
 </p>
 
 1. **Load**: the CSV is read into a pandas DataFrame, with clear error messages for unreadable files.
